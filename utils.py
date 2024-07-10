@@ -1,4 +1,11 @@
 import datetime
+import enum
+
+
+class SPLIT(enum.Enum):
+    TRAIN = "train"
+    VALIDATION = "valid"
+    TEST = "test"
 
 
 def get_date_from_overalltime(overalltime):

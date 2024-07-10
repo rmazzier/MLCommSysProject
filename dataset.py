@@ -1,12 +1,13 @@
 import os
-
+import json
 import numpy as np
 import pandas as pd
 import torch
 from tqdm import tqdm
-from sklearn.model_selection import train_test_split
 
-from utils import get_date_from_overalltime
+from inputimeout import inputimeout, TimeoutOccurred
+from sklearn.model_selection import train_test_split
+from utils import get_date_from_overalltime, SPLIT
 
 
 def crop_with_step(sequence, crop_len, step):
@@ -22,8 +23,79 @@ def crop_with_step(sequence, crop_len, step):
 
 
 class Rastro_Dataset(torch.utils.data.Dataset):
-    def __init__(self, agent_idx):
+    def __init__(self, config, agent_idx, split):
+        """
+        Initialize the dataset with the given configuration and agent index.
+        Parameters:
+        :param config: The configuration dictionary;
+        :param agent_idx: The index of the agent. If equal to -1 it will return the whole dataset;
+        :param split: The split of the dataset (train, validation, test).   
+        """
+        self.config = config
         self.agent_idx = agent_idx
+        self.split = split
+
+        dirs = os.listdir(self.config["GEN_DATA_DIR"])
+        # remove elements that are not directories
+        dirs = [d for d in dirs if os.path.isdir(
+            os.path.join(self.config["GEN_DATA_DIR"], d))]
+        n_agents = len(dirs)
+
+        # Check correctness of the agent index
+        if self.agent_idx >= 0 and self.agent_idx <= n_agents:
+            # Check whether the corresponding directory exists
+            self.dataset_directory = os.path.join(
+                self.config["GEN_DATA_DIR"], f"agent_{self.agent_idx}", self.split.value)
+
+            # Check if there is at least one file in one of the subdirectories
+            if len(os.listdir(os.path.join(self.dataset_directory))) == 0:
+                raise FileNotFoundError(
+                    f"It appears you have not generated the dataset. Please run Rastro_Dataset.generate_data(CONFIG)")
+
+            self.filepaths = [os.path.join(
+                self.dataset_directory, fname) for fname in os.listdir(self.dataset_directory)]
+
+        elif self.agent_idx == -1:
+            # Return the whole dataset
+            self.dataset_directory = self.config["GEN_DATA_DIR"]
+            self.filepaths = []
+            for agent_idx in range(n_agents):
+                agent_directory = os.path.join(
+                    self.config["GEN_DATA_DIR"], f"agent_{agent_idx}", self.split.value)
+                self.filepaths += [os.path.join(
+                    agent_directory, fname) for fname in os.listdir(agent_directory)]
+        else:
+            raise ValueError(
+                f"Agent index must be between 0 and {n_agents} or -1 to return the whole dataset")
+
+    @staticmethod
+    def clear_generated_files():
+        """
+        Clear all the generated files in the GEN_DATA_DIR.
+        """
+
+        # Check if the GEN_DATA_DIR exists
+        if not os.path.exists(CONFIG["GEN_DATA_DIR"]):
+            print("The directory does not exist. Exiting...")
+            return
+
+        # Clear all the files in the GEN_DATA_DIR
+
+        # Loop over agent directories:
+        for agent_dir in os.listdir(CONFIG["GEN_DATA_DIR"]):
+            if agent_dir.endswith(".json"):
+                os.remove(os.path.join(CONFIG["GEN_DATA_DIR"], agent_dir))
+                continue
+            train_directory = os.path.join(
+                CONFIG["GEN_DATA_DIR"], agent_dir, "train")
+            valid_directory = os.path.join(
+                CONFIG["GEN_DATA_DIR"], agent_dir, "valid")
+            test_directory = os.path.join(
+                CONFIG["GEN_DATA_DIR"], agent_dir, "test")
+
+            [[os.remove(os.path.join(d, f))
+              for f in os.listdir(d)] for d in [train_directory, valid_directory, test_directory]]
+
         pass
 
     @staticmethod
@@ -130,7 +202,27 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
     @staticmethod
     def generate_data(config, split_seed=123):
+        # Check if there is a config.json file in the GEN_DATA_DIR
+        if os.path.exists(os.path.join(config["GEN_DATA_DIR"], "config.json")):
+            with open(os.path.join(config["GEN_DATA_DIR"], "config.json"), "r") as f:
+                current_config = json.load(f)
 
+            # Check if the current config is the same as the one passed as argument
+            if current_config == config:
+                try:
+                    choice = inputimeout(
+                        prompt="There is already a dataset generated with the same configuration. Abort? (y/n) (10 seconds to answer)\n", timeout=10)
+                except TimeoutOccurred:
+                    choice = "y"
+
+                if choice == "y":
+                    print("Aborting...")
+                    return
+
+        # Clear all the files in the GEN_DATA_DIR
+        Rastro_Dataset.clear_generated_files()
+
+        # Start the data generation process by reading the .csv
         data_path = config["RAW_DATA_PATH"]
         data = pd.read_csv(data_path).to_numpy()
 
@@ -181,9 +273,9 @@ class Rastro_Dataset(torch.utils.data.Dataset):
             os.makedirs(valid_directory, exist_ok=True)
             os.makedirs(test_directory, exist_ok=True)
 
-            # Clear all previously existing files in one code row in train, valid and test
-            [[os.remove(os.path.join(d, f))
-                for f in os.listdir(d)] for d in [train_directory, valid_directory, test_directory]]
+            # Also save the current config file in the GEN_DATA_DIR as json file
+            with open(os.path.join(config["GEN_DATA_DIR"], "config.json"), "w") as f:
+                json.dump(config, f, indent=4)
 
             timespan_subsets = []
 
@@ -259,16 +351,44 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         return
 
     def __len__(self):
-        return len(self.data)
+        return len(self.filepaths)
 
     def __getitem__(self, index):
-        # Remember to discard the first column since it contains the timestamps
-        # Instead, consider encoding a new feature "day of the week" and/or "hour of the day"
-        # from the timestamp
-        pass
+        # Get the corresponding file
+        filepath = self.filepaths[index]
+        data = np.load(os.path.join(filepath))
+
+        # discard first column (timestamps)
+        data = data[:, 1:]
+
+        # get the input and target
+        input = data[:self.config["CROP_LENGTH"]]
+        target = data[self.config["CROP_LENGTH"]:]
+
+        # The target should only contain features at indices 1,5,13
+        target = target[:, [1, 5, 13]]
+
+        return input, target
 
 
 if __name__ == "__main__":
+    # Example usage of the Rastro_Dataset class
     from constants import CONFIG
 
-    Rastro_Dataset.generate_data(CONFIG)
+    # Rastro_Dataset.generate_data(CONFIG, split_seed=123)
+    train_dataset = Rastro_Dataset(CONFIG, agent_idx=0, split=SPLIT.TRAIN)
+
+    cnt_train_dataset = Rastro_Dataset(
+        CONFIG, agent_idx=-1, split=SPLIT.TRAIN)
+
+    print(len(train_dataset))
+    print(len(cnt_train_dataset))
+
+    train_dataloader = torch.utils.data.DataLoader(
+        cnt_train_dataset, batch_size=32, shuffle=True, num_workers=os.cpu_count())
+
+    # do one iteration
+    for input, target in train_dataloader:
+        print(input.shape)
+        print(target.shape)
+        break

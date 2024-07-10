@@ -3,4 +3,6 @@ __pycache__
 data
 check_gpu.py
 mlcomsys
+
+.ipynb_checkpoints
 *.ipynb
