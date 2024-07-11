@@ -18,8 +18,6 @@ EOS_token = 1
 
 
 # Define the model
-
-
 class EncoderRNN(nn.Module):
     def __init__(self, config, input_size, hidden_size, num_layers=1, dropout_p=0.1):
         super(EncoderRNN, self).__init__()
@@ -60,7 +58,7 @@ class DecoderRNN(nn.Module):
 
             if target_tensor is not None:
                 # Teacher forcing: Feed the target as the next input
-                decoder_input = target_tensor[:, i, :].unsqueeze(1).detach()
+                decoder_input = target_tensor[:, i, :].unsqueeze(1)
             else:
                 # Without teacher forcing: use its own predictions as the next input
                 # detach from history as input

@@ -4,5 +4,7 @@ data
 check_gpu.py
 mlcomsys
 
+wandb
+
 .ipynb_checkpoints
 *.ipynb

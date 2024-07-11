@@ -28,6 +28,7 @@ CONFIG = {
     # Paths
     "RAW_DATA_PATH": os.path.join("data", "rastro.csv"),
     "GEN_DATA_DIR": os.path.join("data", "samples"),
+    "RESULTS_DIR": os.path.join("results"),
 
     # Data parameters
     "CROP_LENGTH": 50,
@@ -36,7 +37,16 @@ CONFIG = {
     "SPLITTING_SUBSET_SIZE": 1800,
     "SAMPLES_PER_AGENT": 604800,  # 1 week of measurements
     "SPLIT_SIZES": [0.8, 0.1, 0.1],  # must sum to 1
-    "EPOCHS": 10,
+    "FEATURES_TO_REMOVE": [],
+    "EPOCHS": 50,
     "BATCH_SIZE": 64,
-    "HIDDEN_SIZE": 512
+    "HIDDEN_SIZE": 512,
+    "TEACHER_FORCING": False,
+
+    # --- WANDB VARIABLES ---
+    "MODEL_NAME": "Seq2Seq_Test5",
+    "WANDB_MODE": "online",
+    # "WANDB_MODE": "disabled",
+    "NOTES": "No teacher forcing, all features"
+
 }

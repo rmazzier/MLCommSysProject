@@ -69,29 +69,29 @@ class Rastro_Dataset(torch.utils.data.Dataset):
                 f"Agent index must be between 0 and {n_agents} or -1 to return the whole dataset")
 
     @staticmethod
-    def clear_generated_files():
+    def clear_generated_files(config):
         """
         Clear all the generated files in the GEN_DATA_DIR.
         """
 
         # Check if the GEN_DATA_DIR exists
-        if not os.path.exists(CONFIG["GEN_DATA_DIR"]):
+        if not os.path.exists(config["GEN_DATA_DIR"]):
             print("The directory does not exist. Exiting...")
             return
 
         # Clear all the files in the GEN_DATA_DIR
 
         # Loop over agent directories:
-        for agent_dir in os.listdir(CONFIG["GEN_DATA_DIR"]):
+        for agent_dir in os.listdir(config["GEN_DATA_DIR"]):
             if agent_dir.endswith(".json"):
-                os.remove(os.path.join(CONFIG["GEN_DATA_DIR"], agent_dir))
+                os.remove(os.path.join(config["GEN_DATA_DIR"], agent_dir))
                 continue
             train_directory = os.path.join(
-                CONFIG["GEN_DATA_DIR"], agent_dir, "train")
+                config["GEN_DATA_DIR"], agent_dir, "train")
             valid_directory = os.path.join(
-                CONFIG["GEN_DATA_DIR"], agent_dir, "valid")
+                config["GEN_DATA_DIR"], agent_dir, "valid")
             test_directory = os.path.join(
-                CONFIG["GEN_DATA_DIR"], agent_dir, "test")
+                config["GEN_DATA_DIR"], agent_dir, "test")
 
             [[os.remove(os.path.join(d, f))
               for f in os.listdir(d)] for d in [train_directory, valid_directory, test_directory]]
@@ -111,6 +111,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         #     return np.isnan(y), lambda z: z.nonzero()[0]
 
         missing_value_dict = {}
+        missing_value_dict[0] = 0
 
         for i in tqdm(range(1, data.shape[1])):
             n_nan = np.isnan(data[:, i]).sum()
@@ -132,7 +133,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         assert np.isnan(data).sum() == 0
         print("All missing values have been replaced")
 
-        for i in range(1, data.shape[1]):
+        for i in range(0, data.shape[1]):
             print("Feature", i, "had", missing_value_dict[i], "missing values")
         return data
 
@@ -220,7 +221,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
                     return
 
         # Clear all the files in the GEN_DATA_DIR
-        Rastro_Dataset.clear_generated_files()
+        Rastro_Dataset.clear_generated_files(config)
 
         # Start the data generation process by reading the .csv
         data_path = config["RAW_DATA_PATH"]
@@ -229,17 +230,17 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         # Percentage of entries with missing values
         data = Rastro_Dataset.interpolate_missing_values(data)
 
-        # 1. Add new column for day of the week
-        data = np.insert(data, 1, 0, axis=1)
+        # 1. Add new column for day of the week in last position
+        data = np.insert(data, data.shape[1], 0, axis=1)
         print("Adding day of the week feature")
         for i in tqdm(range(len(data))):
-            data[i, 1] = get_date_from_overalltime(data[i, 0]).weekday()
+            data[i, -1] = get_date_from_overalltime(data[i, 0]).weekday()
 
-        # 2. Add new column for hour of the day
-        data = np.insert(data, 2, 0, axis=1)
+        # 2. Add new column for hour of the day also in last position
+        data = np.insert(data, data.shape[1], 0, axis=1)
         print("Adding hour of the day feature")
         for i in tqdm(range(len(data))):
-            data[i, 2] = get_date_from_overalltime(data[i, 0]).hour
+            data[i, -1] = get_date_from_overalltime(data[i, 0]).hour
 
         # standardize data
         print("Standardizing data...")
@@ -358,12 +359,14 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         filepath = self.filepaths[index]
         data = np.load(os.path.join(filepath))
 
-        # discard first column (timestamps)
-        data = data[:, 1:]
-
         # get the input and target
         input = data[:self.config["CROP_LENGTH"]]
         target = data[self.config["CROP_LENGTH"]:]
+
+        # Remove the features in the FEATURES_TO_REMOVE list plus the first index
+        # discard first column (timestamps), and the features that we want to remove
+        features_to_remove = [0]+self.config["FEATURES_TO_REMOVE"]
+        input = np.delete(input, features_to_remove, axis=1)
 
         # The target should only contain features at indices 1,5,13
         target = target[:, [1, 5, 13]]
