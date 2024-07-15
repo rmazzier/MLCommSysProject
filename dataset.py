@@ -371,7 +371,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         # The target should only contain features at indices 1,5,13
         target = target[:, [1, 5, 13]]
 
-        return input, target
+        return torch.tensor(input), torch.tensor(target)
 
 
 if __name__ == "__main__":

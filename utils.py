@@ -2,6 +2,7 @@ import datetime
 import enum
 import os
 import matplotlib.pyplot as plt
+from constants import DEVICE
 
 import torch
 
@@ -32,8 +33,8 @@ def plot_forecast_example(config, test_dataset, trained_encoder, trained_decoder
 
     with torch.no_grad():
         for sequence, target in test_dataset:
-            input_tensor = sequence.unsqueeze(0).float().to(config.DEVICE)
-            target_tensor = target.unsqueeze(0).float().to(config.DEVICE)
+            input_tensor = sequence.unsqueeze(0).float().to(DEVICE)
+            target_tensor = target.unsqueeze(0).float().to(DEVICE)
 
             encoder_outputs, encoder_hidden = trained_encoder(input_tensor)
 
@@ -43,7 +44,7 @@ def plot_forecast_example(config, test_dataset, trained_encoder, trained_decoder
 
             # Define variables to plot
             last_elements = input_tensor[-config["N_TO_PREDICT"]:].cpu(
-            ).numpy()
+            ).squeeze().numpy()
             ground_truth = target_tensor.cpu().numpy()
             forecast = decoder_outputs.cpu().numpy()
 

@@ -24,6 +24,7 @@ if __name__ == "__main__":
             Rastro_Dataset.generate_data(config=CONFIG, split_seed=123)
             train_loader, valid_loader, test_dataset, test_loader, encoder, decoder = setup_training(
                 CONFIG)
+
             train(
                 config=CONFIG,
                 train_dataloader=train_loader,
@@ -45,6 +46,3 @@ if __name__ == "__main__":
             # Also save a copy of the relative config file
             with open(os.path.join(run_results_dir, "config.json"), 'w') as f:
                 json.dump(CONFIG, f)
-
-            # Plot an example of forecasting from the test set
-            plot_forecast_example(test_dataset, encoder, decoder)
