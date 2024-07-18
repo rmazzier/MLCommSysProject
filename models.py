@@ -5,55 +5,71 @@ import torch.nn.functional as F
 from constants import DEVICE
 
 
-# Define the input and output sequence lengths
-input_seq_len = 10
-output_seq_len = 5
-
-# Define the number of features
-num_features = 8
-
 # Default tokens to denote the start and end of a sentence
 SOS_token = 0
-EOS_token = 1
 
 
-# Define the model
 class EncoderRNN(nn.Module):
-    def __init__(self, config, input_size, hidden_size, num_layers=1, dropout_p=0.1):
+    def __init__(self, config, input_size, dropout_p=0.1):
         super(EncoderRNN, self).__init__()
-        self.hidden_size = hidden_size
 
-        self.gru = nn.GRU(input_size=input_size,
-                          hidden_size=hidden_size,
-                          num_layers=num_layers,
-                          batch_first=True)
-        # self.dropout = nn.Dropout(dropout_p)
+        self.rec_layer = nn.GRU(input_size=input_size,
+                                hidden_size=config["HIDDEN_SIZE"],
+                                num_layers=config["NUM_LAYERS"],
+                                batch_first=True)
+
+        # self.conv1d = nn.Conv1d(
+        #     in_channels=input_size,
+        #     out_channels=config["HIDDEN_SIZE"],
+        #     kernel_size=config["KERNEL_SIZE"],
+        #     stride=1,
+        #     padding=0,
+        #     groups=1,
+        #     bias=True,
+        #     padding_mode='zeros'
+        # )
+
+        # self.rec_layer = nn.LSTM(
+        #     input_size=input_size,
+        #     hidden_size=config["HIDDEN_SIZE"],
+        #     num_layers=num_layers,
+        #     bias=True,
+        #     batch_first=True,
+        #     dropout=dropout_p,
+        #     bidirectional=False
+        # )
+
+        self.dropout = nn.Dropout(dropout_p)
 
     def forward(self, input):
-        output, hidden = self.gru(input)
+        x = self.dropout(input)
+        output, hidden = self.rec_layer(x)
         return output, hidden
 
 
 class DecoderRNN(nn.Module):
-    def __init__(self, config, hidden_size, output_size):
+    def __init__(self, config, output_size):
         super(DecoderRNN, self).__init__()
         self.config = config
-        self.gru = nn.GRU(output_size, hidden_size, batch_first=True)
-        self.out = nn.Linear(hidden_size, output_size)
+        self.hidden_size = config["HIDDEN_SIZE"]
+        self.rec_layer = nn.GRU(
+            input_size=output_size, hidden_size=self.hidden_size, batch_first=True)
+        self.out = nn.Linear(self.hidden_size, output_size)
 
-        self.hidden_size = hidden_size
         self.output_size = output_size
 
-    def forward(self, encoder_outputs, encoder_hidden, target_tensor=None):
+    def forward(self, encoder_outputs, encoder_hidden, encoder_cell, target_tensor=None):
         batch_size = encoder_outputs.size(0)
         decoder_input = torch.empty(
             batch_size, 1, self.output_size, dtype=torch.float, device=DEVICE).fill_(SOS_token)
         decoder_hidden = encoder_hidden
+        decoder_cell = encoder_cell
+
         decoder_outputs = []
 
         for i in range(self.config["N_TO_PREDICT"]):
-            decoder_output, decoder_hidden = self.forward_step(
-                decoder_input, decoder_hidden)
+            decoder_output, decoder_hidden, decoder_cell = self.forward_step(
+                decoder_input, decoder_hidden, decoder_cell)
             decoder_outputs.append(decoder_output)
 
             if target_tensor is not None:
@@ -68,23 +84,30 @@ class DecoderRNN(nn.Module):
         # We return `None` for consistency in the training loop
         return decoder_outputs, decoder_hidden, None
 
-    def forward_step(self, input, hidden):
+    def forward_step(self, input, hidden, cell):
         # output = self.embedding(input)
         # output = F.relu(input)
-        output, hidden = self.gru(input, hidden)
+        output, hidden = self.rec_layer(
+            input, hidden[-1].unsqueeze(0))
         output = self.out(output)
-        return output, hidden
+        return output, hidden, cell
 
 
-class BahdanauAttention(nn.Module):
+class AttentionLayer(nn.Module):
     def __init__(self, hidden_size):
-        super(BahdanauAttention, self).__init__()
+        super(AttentionLayer, self).__init__()
         self.Wa = nn.Linear(hidden_size, hidden_size)
         self.Ua = nn.Linear(hidden_size, hidden_size)
         self.Va = nn.Linear(hidden_size, 1)
 
     def forward(self, query, keys):
+
+        # Additive Attention
         scores = self.Va(torch.tanh(self.Wa(query) + self.Ua(keys)))
+
+        # Dot product between the query and the keys
+        # scores = torch.bmm(self.Ua(keys), self.Wa(query).permute(0, 2, 1))
+
         scores = scores.squeeze(2).unsqueeze(1)
 
         weights = F.softmax(scores, dim=-1)
@@ -94,52 +117,99 @@ class BahdanauAttention(nn.Module):
 
 
 class AttnDecoderRNN(nn.Module):
-    def __init__(self, hidden_size, output_size, dropout_p=0.1):
+    def __init__(self, config, output_size, dropout_p=0.1, use_attention=True):
         super(AttnDecoderRNN, self).__init__()
-        self.attention = BahdanauAttention(hidden_size)
-        self.gru = nn.GRU(2 * hidden_size, hidden_size, batch_first=True)
-        self.out = nn.Linear(hidden_size, output_size)
+        self.hidden_size = config["HIDDEN_SIZE"]
+        self.config = config
+        self.attention = AttentionLayer(self.hidden_size)
+
+        self.use_attention = use_attention
+
+        if use_attention:
+            self.rec_layer = nn.GRU(self.hidden_size + output_size,
+                                    self.hidden_size, batch_first=True)
+        else:
+            self.rec_layer = nn.GRU(output_size,
+                                    self.hidden_size, batch_first=True)
+
+        self.out = nn.Linear(self.hidden_size, output_size)
         self.dropout = nn.Dropout(dropout_p)
 
     def forward(self, encoder_outputs, encoder_hidden, target_tensor=None):
         batch_size = encoder_outputs.size(0)
+        # decoder_input = torch.empty(
+        #     batch_size, 1, self.hidden_size, dtype=torch.float, device=DEVICE).fill_(SOS_token)
         decoder_input = torch.empty(
-            batch_size, 1, dtype=torch.long, device=DEVICE).fill_(SOS_token)
-        decoder_hidden = encoder_hidden
-        decoder_outputs = []
+            batch_size, 1, 3, dtype=torch.float, device=DEVICE).fill_(SOS_token)
+
+        # Encoder hidden has shape (num_layers, batch_size, hidden_size)
+        # We just want the hidden state of the last layer
+        decoder_hidden = encoder_hidden[-1].unsqueeze(0)
+        predictions = []
         attentions = []
 
         for i in range(self.config["N_TO_PREDICT"]):
-            decoder_output, decoder_hidden, attn_weights = self.forward_step(
+            prediction, decoder_output, decoder_hidden, attn_weights = self.forward_step(
                 decoder_input, decoder_hidden, encoder_outputs
             )
-            decoder_outputs.append(decoder_output)
+            predictions.append(prediction)
             attentions.append(attn_weights)
 
             if target_tensor is not None:
                 # Teacher forcing: Feed the target as the next input
-                decoder_input = target_tensor[:, i].unsqueeze(
-                    1)  # Teacher forcing
+                decoder_input = target_tensor[:, i, :].unsqueeze(1)
             else:
                 # Without teacher forcing: use its own predictions as the next input
-                _, topi = decoder_output.topk(1)
                 # detach from history as input
-                decoder_input = topi.squeeze(-1).detach()
 
-        decoder_outputs = torch.cat(decoder_outputs, dim=1)
-        decoder_outputs = F.log_softmax(decoder_outputs, dim=-1)
-        attentions = torch.cat(attentions, dim=1)
+                # decoder_input = decoder_output.detach()
+                decoder_input = prediction.detach()
 
-        return decoder_outputs, decoder_hidden, attentions
+        predictions = torch.cat(predictions, dim=1)
+        predictions = F.log_softmax(predictions, dim=-1)
+        if attentions[0] == None:
+            attentions = None
+        else:
+            attentions = torch.cat(attentions, dim=1)
 
-    def forward_step(self, input, hidden, encoder_outputs):
-        embedded = self.dropout(self.embedding(input))
+        return predictions, decoder_hidden, attentions
 
-        query = hidden.permute(1, 0, 2)
-        context, attn_weights = self.attention(query, encoder_outputs)
-        input_gru = torch.cat((embedded, context), dim=2)
+    def forward_step(self, decoder_input, decoder_hidden, encoder_outputs):
+        # embedded = self.dropout(self.embedding(decoder_input))
+        if self.use_attention:
 
-        output, hidden = self.gru(input_gru, hidden)
-        output = self.out(output)
+            query = decoder_hidden.permute(1, 0, 2)
+            context, attn_weights = self.attention(query, encoder_outputs)
+            input_gru = torch.cat((decoder_input, context), dim=2)
+        else:
+            input_gru = decoder_input
+            attn_weights = None
 
-        return output, hidden, attn_weights
+        decoder_output, decoder_hidden = self.rec_layer(
+            input_gru, decoder_hidden)
+        prediction = self.out(decoder_output)
+
+        return prediction, decoder_output, decoder_hidden, attn_weights
+
+
+class Seq2SeqRNN(nn.Module):
+    def __init__(self, config, input_size, output_size, use_attention=True):
+        super(Seq2SeqRNN, self).__init__()
+        self.encoder = EncoderRNN(
+            config, input_size)
+        self.decoder = AttnDecoderRNN(
+            config, output_size, dropout_p=0.1, use_attention=use_attention)
+        self.teacher_forcing = config["TEACHER_FORCING"]
+
+    def forward(self, input_tensor, target_tensor=None):
+        encoder_outputs, encoder_hidden = self.encoder(
+            input_tensor)
+
+        if self.teacher_forcing:
+            decoder_outputs, decoder_hidden, _ = self.decoder(
+                encoder_outputs, encoder_hidden, target_tensor)
+        else:
+            decoder_outputs, decoder_hidden, _ = self.decoder(
+                encoder_outputs, encoder_hidden)
+
+        return decoder_outputs, decoder_hidden

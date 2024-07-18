@@ -10,32 +10,34 @@ from tqdm import tqdm
 from dataset import Rastro_Dataset
 from constants import DEVICE
 from utils import plot_forecast_example, SPLIT
-from models import EncoderRNN, DecoderRNN
+from models import Seq2SeqRNN
 
 
-def train_epoch(train_dataloader, valid_dataloader, encoder, decoder, encoder_optimizer,
-                decoder_optimizer, criterion, teacher_forcing=False):
+def train_epoch(train_dataloader, valid_dataloader, net, optimizer, criterion, teacher_forcing=False, max_iters=None):
 
     total_loss_train = 0
     total_loss_valid = 0
 
     # Training
-    encoder.train()
-    decoder.train()
+    net.train()
 
     for i, data in tqdm(enumerate(train_dataloader)):
+        if max_iters is not None and i >= max_iters:
+            break
         input_tensor, target_tensor = data
         input_tensor = input_tensor.float().to(DEVICE)
         target_tensor = target_tensor.float().to(DEVICE)
 
-        encoder_optimizer.zero_grad()
-        decoder_optimizer.zero_grad()
+        optimizer.zero_grad()
 
-        encoder_outputs, encoder_hidden = encoder(input_tensor)
+        # encoder_outputs, encoder_hidden, encoder_cell = encoder(input_tensor)
 
-        # To use teacher forcing, we feed the target tensor as well
-        decoder_outputs, _, _ = decoder(
-            encoder_outputs, encoder_hidden)
+        # # To use teacher forcing, we feed the target tensor as well
+        # decoder_outputs, _, _ = decoder(
+        #     encoder_outputs, encoder_hidden, encoder_cell)
+
+        decoder_outputs, _ = net(
+            input_tensor, target_tensor if teacher_forcing else None)
 
         loss = criterion(
             decoder_outputs,
@@ -45,29 +47,20 @@ def train_epoch(train_dataloader, valid_dataloader, encoder, decoder, encoder_op
         if i % 50 == 0:
             print(f"Loss: {loss.item()}")
 
-        encoder_optimizer.step()
-        decoder_optimizer.step()
+        optimizer.step()
 
         total_loss_train += loss.item()
 
     # Validation
-    encoder.eval()
-    decoder.eval()
+    net.eval()
     with torch.no_grad():
         for i, data in tqdm(enumerate(valid_dataloader)):
             input_tensor, target_tensor = data
             input_tensor = input_tensor.float().to(DEVICE)
             target_tensor = target_tensor.float().to(DEVICE)
 
-            encoder_outputs, encoder_hidden = encoder(input_tensor)
-
             # No Teacher forcing
-            if teacher_forcing:
-                decoder_outputs, _, _ = decoder(
-                    encoder_outputs, encoder_hidden, target_tensor)
-            else:
-                decoder_outputs, _, _ = decoder(
-                    encoder_outputs, encoder_hidden)
+            decoder_outputs, _ = net(input_tensor, None)
 
             loss = criterion(
                 decoder_outputs,
@@ -82,7 +75,7 @@ def train_epoch(train_dataloader, valid_dataloader, encoder, decoder, encoder_op
     return total_loss_train, total_loss_valid
 
 
-def train(config, train_dataloader, valid_dataloader, test_dataloader, encoder, decoder, learning_rate=0.001,
+def train(config, train_dataloader, valid_dataloader, test_dataloader, net, learning_rate=0.001,
           print_every=1, plot_every=100):
 
     wandb.login()
@@ -95,28 +88,25 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, encoder, 
         mode=config["WANDB_MODE"],
     )
 
-    wandb.watch(encoder)
-    wandb.watch(decoder)
+    wandb.watch(net)
 
     # start = time.time()
     plot_losses = []
     print_loss_total = 0  # Reset every print_every
     plot_loss_total = 0  # Reset every plot_every
 
-    encoder_optimizer = optim.Adam(encoder.parameters(), lr=learning_rate)
-    decoder_optimizer = optim.Adam(decoder.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(
+        net.parameters(), lr=learning_rate, weight_decay=0.0001)
     # criterion = nn.NLLLoss()
-    criterion = nn.MSELoss()
-    # criterion = nn.L1Loss()
+    # criterion = nn.MSELoss()
+    criterion = nn.L1Loss()
 
     for epoch in range(1, config["EPOCHS"] + 1):
         print(f"Start epoch {epoch}")
         train_loss, valid_loss = train_epoch(train_dataloader,
                                              valid_dataloader,
-                                             encoder,
-                                             decoder,
-                                             encoder_optimizer,
-                                             decoder_optimizer,
+                                             net,
+                                             optimizer,
                                              criterion,
                                              teacher_forcing=config["TEACHER_FORCING"])
 
@@ -124,8 +114,14 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, encoder, 
                    "Validation Loss": valid_loss}, step=epoch)
 
     # Test phase
-    encoder.eval()
-    decoder.eval()
+    test_step(test_dataloader, net, criterion)
+
+    run.finish()
+    return encoder, decoder
+
+
+def test_step(test_dataloader, net, criterion):
+    net.eval()
 
     test_loss = 0
     with torch.no_grad():
@@ -134,11 +130,8 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, encoder, 
             input_tensor = input_tensor.float().to(DEVICE)
             target_tensor = target_tensor.float().to(DEVICE)
 
-            encoder_outputs, encoder_hidden = encoder(input_tensor)
-
-            # No Teacher forcing
-            decoder_outputs, _, _ = decoder(
-                encoder_outputs, encoder_hidden)
+            decoder_outputs, _ = net(
+                input_tensor, None)
 
             loss = criterion(
                 decoder_outputs,
@@ -151,14 +144,11 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, encoder, 
     print(f"Test Loss: {test_loss}")
     wandb.log({"Test Loss": test_loss})
 
-    run.finish()
-    return encoder, decoder
 
-
-def setup_training(config):
+def setup_training(config, agent_idx=-1):
     train_dataset = Rastro_Dataset(
         config=config,
-        agent_idx=-1,
+        agent_idx=agent_idx,
         split=SPLIT.TRAIN)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
@@ -169,7 +159,7 @@ def setup_training(config):
 
     valid_dataset = Rastro_Dataset(
         config=config,
-        agent_idx=-1,
+        agent_idx=agent_idx,
         split=SPLIT.VALIDATION)
     valid_loader = torch.utils.data.DataLoader(
         valid_dataset,
@@ -180,7 +170,7 @@ def setup_training(config):
 
     test_dataset = Rastro_Dataset(
         config=config,
-        agent_idx=-1,
+        agent_idx=agent_idx,
         split=SPLIT.TEST)
     test_loader = torch.utils.data.DataLoader(
         test_dataset,
@@ -195,29 +185,31 @@ def setup_training(config):
     # Get the output size by sampling a single label
     output_size = next(iter(train_loader))[1][0].shape[-1]
 
-    encoder = EncoderRNN(config=config, input_size=input_size,
-                         hidden_size=256, num_layers=1).to(DEVICE)
-    decoder = DecoderRNN(config=config, hidden_size=256,
-                         output_size=output_size).to(DEVICE)
+    net = Seq2SeqRNN(config, input_size, output_size,
+                     use_attention=False).to(DEVICE)
 
-    return train_loader, valid_loader, test_dataset, test_loader, encoder, decoder
+    return train_loader, valid_loader, test_dataset, test_loader, net
 
 
 if __name__ == "__main__":
     from constants import CONFIG
     import json
 
-    # Rastro_Dataset.generate_data(config=CONFIG, split_seed=123)
+    Rastro_Dataset.generate_data(
+        config=CONFIG, split_seed=123, standardize=True)
 
-    train_loader, valid_loader, test_dataset, test_loader, encoder, decoder = setup_training(
-        CONFIG)
+    # Rastro_Dataset.generate_data_simple(
+    #     config=CONFIG, split_seed=123, standardize=True
+    # )
+
+    train_loader, valid_loader, test_dataset, test_loader, net = setup_training(
+        CONFIG, agent_idx=-1)
 
     encoder, decoder = train(config=CONFIG,
                              train_dataloader=train_loader,
                              valid_dataloader=valid_loader,
                              test_dataloader=test_loader,
-                             encoder=encoder,
-                             decoder=decoder,
+                             net=net,
                              learning_rate=0.001)
 
     # Save logs and weights the trained models
@@ -231,4 +223,4 @@ if __name__ == "__main__":
         json.dump(CONFIG, f)
 
     # Plot an example of forecasting from the test set
-    plot_forecast_example(test_dataset, encoder, decoder)
+    # plot_forecast_example(test_dataset, encoder, decoder)

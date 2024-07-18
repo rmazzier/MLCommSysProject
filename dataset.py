@@ -138,7 +138,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         return data
 
     @staticmethod
-    def generate_data_simple(config, split_seed=123):
+    def generate_data_simple(config, split_seed=123, standardize=True):
         """
         Also implement another data generation method, that doesnt use any overlapping in the
         cropping process. This is to avoid completely the problem of overlapping crops in different
@@ -147,36 +147,71 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         injected in the data by performing the splitting-by-subset procedure.
         """
 
-        # TODO finire di implementare
+        # Check if there is a config.json file in the GEN_DATA_DIR
+        if os.path.exists(os.path.join(config["GEN_DATA_DIR"], "config.json")):
+            with open(os.path.join(config["GEN_DATA_DIR"], "config.json"), "r") as f:
+                current_config = json.load(f)
 
-        # Now let's save the crops in different folders, one for each agent
-        # Each agent must contain a total of n_agent_samples = 604800 (1 week of measurements)
+            # Check if the current config is the same as the one passed as argument
+            if current_config == config:
+                try:
+                    choice = inputimeout(
+                        prompt="There is already a dataset generated with the same configuration. Abort? (y/n) (10 seconds to answer)\n", timeout=10)
+                except TimeoutOccurred:
+                    choice = "y"
+
+                if choice == "y":
+                    print("Aborting...")
+                    return
+
+        # Clear all the files in the GEN_DATA_DIR
+        Rastro_Dataset.clear_generated_files(config)
+
+        # Read the .csv file
         data_path = config["RAW_DATA_PATH"]
         data = pd.read_csv(data_path).to_numpy()
 
         # Percentage of entries with missing values
         data = Rastro_Dataset.interpolate_missing_values(data)
 
-        # TODO: Add the time of day and day of the week here
+        # 1. Add new column for day of the week in last position
+        data = np.insert(data, data.shape[1], 0, axis=1)
+        print("Adding day of the week feature")
+        for i in tqdm(range(len(data))):
+            data[i, -1] = get_date_from_overalltime(data[i, 0]).weekday()
 
-        # standardize data
-        data_std = (data - data.mean(axis=0)) / data.std(axis=0)
-        # keep the first column (timestamps) unchanged
-        data_std[:, 0] = data[:, 0]
+        # 2. Add new column for hour of the day also in last position
+        data = np.insert(data, data.shape[1], 0, axis=1)
+        print("Adding hour of the day feature")
+        for i in tqdm(range(len(data))):
+            data[i, -1] = get_date_from_overalltime(data[i, 0]).hour
+
+        if standardize:
+            # standardize data
+            data_std = (data - data.mean(axis=0)) / data.std(axis=0)
+            # keep the first column (timestamps) unchanged
+            data_std[:, 0] = data[:, 0]
+        else:
+            data_std = data
+
+        # perform cropping
+        cropped_dataset = crop_with_step(
+            data_std, config["CROP_LENGTH"] + config["N_TO_PREDICT"],  config["CROP_LENGTH"] + config["N_TO_PREDICT"])
 
         agent_idx = 0
         start_t = data[0, 0]
-        agent_samples = []
+        agent_crops = []
 
         agent_directory = os.path.join(
             config["GEN_DATA_DIR"], f"agent_{agent_idx}")
-        os.makedirs(agent_directory, exist_ok=True)
+        # os.makedirs(agent_directory, exist_ok=True)
 
-        for sample in enumerate(data_std):
-            cur_t = sample[0]
-            agent_crops.append(sample)
+        for idx, crop in enumerate(cropped_dataset):
+            cur_t = crop[-1][0]
+            agent_crops.append(crop)
 
             if cur_t - start_t > config["SAMPLES_PER_AGENT"]:
+                os.makedirs(agent_directory, exist_ok=True)
                 agent_crops = np.array(agent_crops)
 
                 # perform splitting in train, validation and test using sklearn library
@@ -184,12 +219,20 @@ class Rastro_Dataset(torch.utils.data.Dataset):
                     agent_crops, test_size=config["SPLIT_SIZES"][1] + config["SPLIT_SIZES"][2], random_state=split_seed)
 
                 valid, test = train_test_split(
-                    tmp, test_size=config["SPLIT_SIZES"][2], random_state=split_seed)
+                    tmp, test_size=config["SPLIT_SIZES"][2] / (config["SPLIT_SIZES"][1] + config["SPLIT_SIZES"][2]), random_state=split_seed)
 
                 # Save the crops in the corresponding directories
-                np.save(os.path.join(agent_directory, "train_split.npy"), train)
-                np.save(os.path.join(agent_directory, "valid.npy"), valid)
-                np.save(os.path.join(agent_directory, "test.npy"), test)
+                for k, train_crop in enumerate(train):
+                    np.save(os.path.join(agent_directory,
+                            "train", f"train_crop_{agent_idx}_{k}"), train_crop)
+
+                for k, valid_crop in enumerate(valid):
+                    np.save(os.path.join(agent_directory,
+                            "valid", f"valid_crop_{agent_idx}_{k}"), valid_crop)
+
+                for k, test_crop in enumerate(test):
+                    np.save(os.path.join(agent_directory,
+                            "test", f"test_crop_{agent_idx}_{k}"), test_crop)
 
                 # Setup for next agent
                 agent_idx += 1
@@ -198,11 +241,11 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
                 agent_directory = os.path.join(
                     config["GEN_DATA_DIR"], f"agent_{agent_idx}")
-                os.makedirs(agent_directory, exist_ok=True)
+
         pass
 
     @staticmethod
-    def generate_data(config, split_seed=123):
+    def generate_data(config, split_seed=123, standardize=True):
         # Check if there is a config.json file in the GEN_DATA_DIR
         if os.path.exists(os.path.join(config["GEN_DATA_DIR"], "config.json")):
             with open(os.path.join(config["GEN_DATA_DIR"], "config.json"), "r") as f:
@@ -244,9 +287,12 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
         # standardize data
         print("Standardizing data...")
-        data_std = (data - data.mean(axis=0)) / data.std(axis=0)
-        # keep the first column (timestamps) unchanged
-        data_std[:, 0] = data[:, 0]
+        if standardize:
+            data_std = (data - data.mean(axis=0)) / data.std(axis=0)
+            # keep the first column (timestamps) unchanged
+            data_std[:, 0] = data[:, 0]
+        else:
+            data_std = data
 
         # We now subdivide the data to different agents
         # Remember: each agent must contain a total of n_agent_samples = config["SAMPLES_PER_AGENT"]
@@ -297,7 +343,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
                 timespan_subsets, test_size=config["SPLIT_SIZES"][1] + config["SPLIT_SIZES"][2], random_state=split_seed)
 
             valid, test = train_test_split(
-                tmp, test_size=config["SPLIT_SIZES"][2], random_state=split_seed)
+                tmp, test_size=config["SPLIT_SIZES"][2] / (config["SPLIT_SIZES"][1]+config["SPLIT_SIZES"][2]), random_state=split_seed)
 
             # Now we actually crop and save the data in corresponding folders
 
@@ -378,7 +424,12 @@ if __name__ == "__main__":
     # Example usage of the Rastro_Dataset class
     from constants import CONFIG
 
-    # Rastro_Dataset.generate_data(CONFIG, split_seed=123)
+    # Rastro_Dataset.generate_data(CONFIG, split_seed=123, standardize=False)
+    Rastro_Dataset.generate_data_simple(
+        CONFIG, split_seed=123, standardize=False)
+
+    quit()
+
     train_dataset = Rastro_Dataset(CONFIG, agent_idx=0, split=SPLIT.TRAIN)
 
     cnt_train_dataset = Rastro_Dataset(

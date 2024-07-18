@@ -37,16 +37,17 @@ CONFIG = {
     "SPLITTING_SUBSET_SIZE": 1800,
     "SAMPLES_PER_AGENT": 604800,  # 1 week of measurements
     "SPLIT_SIZES": [0.8, 0.1, 0.1],  # must sum to 1
-    "FEATURES_TO_REMOVE": [],
-    "EPOCHS": 50,
+    "FEATURES_TO_REMOVE": [3, 4, 6, 7, 11, 12, 16, 17],
+    "EPOCHS": 20,
     "BATCH_SIZE": 64,
-    "HIDDEN_SIZE": 512,
+    "HIDDEN_SIZE": 128,
     "TEACHER_FORCING": False,
+    "NUM_LAYERS": 3,
 
     # --- WANDB VARIABLES ---
-    "MODEL_NAME": "Seq2Seq_Test5",
+    "MODEL_NAME": "Seq2Seq_GRU_03",
     "WANDB_MODE": "online",
     # "WANDB_MODE": "disabled",
-    "NOTES": "No teacher forcing, all features"
+    "NOTES": "No attention",
 
 }
