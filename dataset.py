@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from inputimeout import inputimeout, TimeoutOccurred
 from sklearn.model_selection import train_test_split
-from utils import get_date_from_overalltime, SPLIT
+from utils import get_date_from_overalltime, SPLIT, interpolate_missing_values, interp_discontinuities
 
 
 def crop_with_step(sequence, crop_len, step):
@@ -96,49 +96,8 @@ class Rastro_Dataset(torch.utils.data.Dataset):
             [[os.remove(os.path.join(d, f))
               for f in os.listdir(d)] for d in [train_directory, valid_directory, test_directory]]
 
-        pass
-
     @staticmethod
-    def interpolate_missing_values(data):
-
-        # Check for missing values
-        print("Percentage of missing values in the dataset: ",
-              np.isnan(data).sum() / data.size)
-
-        # Let's deal with those.
-        # We will replace the missing values using a linear interpolation strategy.
-        # def nan_helper(y):
-        #     return np.isnan(y), lambda z: z.nonzero()[0]
-
-        missing_value_dict = {}
-        missing_value_dict[0] = 0
-
-        for i in tqdm(range(1, data.shape[1])):
-            n_nan = np.isnan(data[:, i]).sum()
-            missing_value_dict[i] = n_nan
-
-            y = data[:, i]
-            # nans, x = nan_helper(y)
-            nans = np.isnan(y)
-            def x(z): return z.nonzero()[0]
-            y[nans] = np.interp(x(nans), x(~nans), y[~nans])
-            data[:, i] = y
-
-        # for the last row, replace the missing values with the previous value
-        for i in range(1, data.shape[1]):
-            if np.isnan(data[-1, i]):
-                data[-1, i] = data[-2, i]
-
-        # Check that no missing values are left
-        assert np.isnan(data).sum() == 0
-        print("All missing values have been replaced")
-
-        for i in range(0, data.shape[1]):
-            print("Feature", i, "had", missing_value_dict[i], "missing values")
-        return data
-
-    @staticmethod
-    def generate_data_simple(config, split_seed=123, standardize=True):
+    def generate_data_simple(config, split_seed=123, standardize=True, safemode=True):
         """
         Also implement another data generation method, that doesnt use any overlapping in the
         cropping process. This is to avoid completely the problem of overlapping crops in different
@@ -153,7 +112,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
                 current_config = json.load(f)
 
             # Check if the current config is the same as the one passed as argument
-            if current_config == config:
+            if current_config == config and safemode:
                 try:
                     choice = inputimeout(
                         prompt="There is already a dataset generated with the same configuration. Abort? (y/n) (10 seconds to answer)\n", timeout=10)
@@ -172,7 +131,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         data = pd.read_csv(data_path).to_numpy()
 
         # Percentage of entries with missing values
-        data = Rastro_Dataset.interpolate_missing_values(data)
+        data = interpolate_missing_values(data)
 
         # 1. Add new column for day of the week in last position
         data = np.insert(data, data.shape[1], 0, axis=1)
@@ -245,14 +204,14 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         pass
 
     @staticmethod
-    def generate_data(config, split_seed=123, standardize=True):
+    def generate_data(config, split_seed=123, standardize=True, safemode=True):
         # Check if there is a config.json file in the GEN_DATA_DIR
         if os.path.exists(os.path.join(config["GEN_DATA_DIR"], "config.json")):
             with open(os.path.join(config["GEN_DATA_DIR"], "config.json"), "r") as f:
                 current_config = json.load(f)
 
             # Check if the current config is the same as the one passed as argument
-            if current_config == config:
+            if current_config == config and safemode:
                 try:
                     choice = inputimeout(
                         prompt="There is already a dataset generated with the same configuration. Abort? (y/n) (10 seconds to answer)\n", timeout=10)
@@ -270,8 +229,16 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         data_path = config["RAW_DATA_PATH"]
         data = pd.read_csv(data_path).to_numpy()
 
-        # Percentage of entries with missing values
-        data = Rastro_Dataset.interpolate_missing_values(data)
+        # The data has some time gaps in the measurements.
+        # This is a problem, because each time step in the time series must represent
+        # a coherent time interval (a second)
+        # Here, we add the missing timestamps, only if the gap is less than MAX_INTERP_WIDTH
+        # Note that the timestamp is added as the missing time index,
+        # and the other features are filled with NaNs, which we will interpolate later.
+        data = interp_discontinuities(data, config["MAX_INTERP_WIDTH"])
+
+        # Interpolate missing values using linear interpolation?
+        data = interpolate_missing_values(data)
 
         # 1. Add new column for day of the week in last position
         data = np.insert(data, data.shape[1], 0, axis=1)
@@ -326,7 +293,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
             timespan_subsets = []
 
-            # Do a similar operation, but this time we want to subdivide data of this
+            # Now we want to subdivide data of this
             # agent into subsets that span one SPLITTING_SUBSET_SIZE
 
             # normalize the first column so that indexes start from 0
@@ -336,7 +303,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
             for i in range(int(timespan_subset_ids.max())):
                 timespan_subsets.append(agent_data[timespan_subset_ids == i])
 
-            # Now that we have divided everything in small subsets of 1 SPLITTING_SUBSET_SIZE each,
+            # Now that we have divided everything in small subsets of SPLITTING_SUBSET_SIZE each,
             # we randomly split this collection of subsets into train, validation and test
 
             train, tmp = train_test_split(
@@ -356,8 +323,15 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
                 for k, crop in enumerate(training_crops):
                     # Save the crops in the corresponding directories
-                    np.save(os.path.join(
-                        train_directory, f"train_crop_agent_{agent_idx}_{sub_idx}_{k}"), crop)
+
+                    # Check that the crop has not time gaps (i.e the time difference between two consecutive
+                    # timestamps is equal to 1)
+                    if np.all(np.diff(crop[:, 0]) == 1):
+                        np.save(os.path.join(
+                            train_directory, f"train_crop_agent_{agent_idx}_{sub_idx}_{k}"), crop)
+                    else:
+                        print(
+                            f"Skipping Training crop {k} in subset {sub_idx} of agent {agent_idx} because of time gaps")
 
             for sub_idx, valid_subset in enumerate(valid):
                 # now perform cropping with step
@@ -366,8 +340,12 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
                 for k, crop in enumerate(validation_crops):
                     # Save the crops in the corresponding directories
-                    np.save(os.path.join(
-                        valid_directory, f"valid_crop_agent_{agent_idx}_{sub_idx}_{k}"), crop)
+                    if np.all(np.diff(crop[:, 0]) == 1):
+                        np.save(os.path.join(
+                            valid_directory, f"valid_crop_agent_{agent_idx}_{sub_idx}_{k}"), crop)
+                    else:
+                        print(
+                            f"Skipping Valid crop {k} in subset {sub_idx} of agent {agent_idx} because of time gaps")
 
             for sub_idx, test_subset in enumerate(test):
                 # now perform cropping with step
@@ -376,11 +354,14 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
                 for k, crop in enumerate(test_crops):
                     # Save the crops in the corresponding directories
-                    np.save(os.path.join(
-                        test_directory, f"test_crop_agent_{agent_idx}_{sub_idx}_{k}"), crop)
-
+                    if np.all(np.diff(crop[:, 0]) == 1):
+                        np.save(os.path.join(
+                            test_directory, f"test_crop_agent_{agent_idx}_{sub_idx}_{k}"), crop)
+                    else:
+                        print(
+                            f"Skipping Test crop {k} in subset {sub_idx} of agent {agent_idx} because of time gaps")
         # Print some statistics
-        print("Number of agents: ", len(agents_data))
+        print("Number of agents: ", int(agent_idxs.max())+1)
 
         # For each agent print the number of samples in train, validation and test
         for agent_idx, agent_data in enumerate(agents_data):
@@ -403,30 +384,30 @@ class Rastro_Dataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         # Get the corresponding file
         filepath = self.filepaths[index]
-        data = np.load(os.path.join(filepath))
+        data = np.load(filepath)
 
         # get the input and target
-        input = data[:self.config["CROP_LENGTH"]]
+        sequence = data[:self.config["CROP_LENGTH"]]
         target = data[self.config["CROP_LENGTH"]:]
 
         # Remove the features in the FEATURES_TO_REMOVE list plus the first index
         # discard first column (timestamps), and the features that we want to remove
         features_to_remove = [0]+self.config["FEATURES_TO_REMOVE"]
-        input = np.delete(input, features_to_remove, axis=1)
+        sequence = np.delete(sequence, features_to_remove, axis=1)
 
         # The target should only contain features at indices 1,5,13
         target = target[:, [1, 5, 13]]
 
-        return torch.tensor(input), torch.tensor(target)
+        return torch.tensor(sequence), torch.tensor(target)
 
 
 if __name__ == "__main__":
     # Example usage of the Rastro_Dataset class
     from constants import CONFIG
 
-    # Rastro_Dataset.generate_data(CONFIG, split_seed=123, standardize=False)
-    Rastro_Dataset.generate_data_simple(
-        CONFIG, split_seed=123, standardize=False)
+    Rastro_Dataset.generate_data(CONFIG, split_seed=123, standardize=False)
+    # Rastro_Dataset.generate_data_simple(
+    #     CONFIG, split_seed=123, standardize=False)
 
     quit()
 

@@ -10,10 +10,17 @@ from tqdm import tqdm
 from dataset import Rastro_Dataset
 from constants import DEVICE
 from utils import plot_forecast_example, SPLIT
-from models import Seq2SeqRNN
+from models import Seq2SeqRNN, EncoderRNN, AttnDecoderRNN
 
 
-def train_epoch(train_dataloader, valid_dataloader, net, optimizer, criterion, teacher_forcing=False, max_iters=None):
+def train_epoch(
+        config,
+        train_dataloader,
+        valid_dataloader,
+        net,
+        optimizer,
+        criterion,
+        max_iters=None):
 
     total_loss_train = 0
     total_loss_valid = 0
@@ -30,17 +37,11 @@ def train_epoch(train_dataloader, valid_dataloader, net, optimizer, criterion, t
 
         optimizer.zero_grad()
 
-        # encoder_outputs, encoder_hidden, encoder_cell = encoder(input_tensor)
-
-        # # To use teacher forcing, we feed the target tensor as well
-        # decoder_outputs, _, _ = decoder(
-        #     encoder_outputs, encoder_hidden, encoder_cell)
-
-        decoder_outputs, _ = net(
-            input_tensor, target_tensor if teacher_forcing else None)
+        predictions = net(
+            input_tensor, target_tensor if config["TEACHER_FORCING"] else None)
 
         loss = criterion(
-            decoder_outputs,
+            predictions,
             target_tensor
         )
         loss.backward()
@@ -53,17 +54,18 @@ def train_epoch(train_dataloader, valid_dataloader, net, optimizer, criterion, t
 
     # Validation
     net.eval()
+
     with torch.no_grad():
         for i, data in tqdm(enumerate(valid_dataloader)):
             input_tensor, target_tensor = data
             input_tensor = input_tensor.float().to(DEVICE)
             target_tensor = target_tensor.float().to(DEVICE)
 
-            # No Teacher forcing
-            decoder_outputs, _ = net(input_tensor, None)
+            # No Teacher forcing since we are in validation mode
+            predictions = net(input_tensor)
 
             loss = criterion(
-                decoder_outputs,
+                predictions,
                 target_tensor
             )
 
@@ -75,8 +77,7 @@ def train_epoch(train_dataloader, valid_dataloader, net, optimizer, criterion, t
     return total_loss_train, total_loss_valid
 
 
-def train(config, train_dataloader, valid_dataloader, test_dataloader, net, learning_rate=0.001,
-          print_every=1, plot_every=100):
+def train(config, train_dataloader, valid_dataloader, test_dataloader, net, learning_rate=0.001):
 
     wandb.login()
     run = wandb.init(
@@ -90,39 +91,50 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, net, lear
 
     wandb.watch(net)
 
-    # start = time.time()
-    plot_losses = []
-    print_loss_total = 0  # Reset every print_every
-    plot_loss_total = 0  # Reset every plot_every
-
     optimizer = optim.Adam(
-        net.parameters(), lr=learning_rate, weight_decay=0.0001)
-    # criterion = nn.NLLLoss()
-    # criterion = nn.MSELoss()
-    criterion = nn.L1Loss()
+        net.parameters(), lr=learning_rate, weight_decay=0.001)
+
+    if config["CRITERION"] == "MSE":
+        criterion = nn.MSELoss()
+    elif config["CRITERION"] == "MAE":
+        criterion = nn.L1Loss()
+    else:
+        raise ValueError("Invalid criterion")
+
+    best_valid_loss = float("inf")
+    run_results_dir = os.path.join(config["RESULTS_DIR"], config["MODEL_NAME"])
+    os.makedirs(run_results_dir, exist_ok=True)
 
     for epoch in range(1, config["EPOCHS"] + 1):
         print(f"Start epoch {epoch}")
-        train_loss, valid_loss = train_epoch(train_dataloader,
+        train_loss, valid_loss = train_epoch(config,
+                                             train_dataloader,
                                              valid_dataloader,
                                              net,
                                              optimizer,
-                                             criterion,
-                                             teacher_forcing=config["TEACHER_FORCING"])
+                                             criterion)
 
         wandb.log({"Train Loss": train_loss,
                    "Validation Loss": valid_loss}, step=epoch)
 
+        if valid_loss < best_valid_loss and config["WANDB_MODE"] == "online":
+            best_valid_loss = valid_loss
+            # Save the model
+            torch.save(net.state_dict(), os.path.join(
+                run_results_dir, "model_weights.pt"))
+
+            # Save online
+            wandb.save(os.path.join(run_results_dir, "model_weights.pt"))
+
     # Test phase
-    test_step(test_dataloader, net, criterion)
+    test_step(config, test_dataloader, net, criterion)
 
     run.finish()
     return encoder, decoder
 
 
-def test_step(test_dataloader, net, criterion):
+def test_step(config, test_dataloader, net, criterion):
     net.eval()
-
     test_loss = 0
     with torch.no_grad():
         for i, data in tqdm(enumerate(test_dataloader)):
@@ -130,11 +142,11 @@ def test_step(test_dataloader, net, criterion):
             input_tensor = input_tensor.float().to(DEVICE)
             target_tensor = target_tensor.float().to(DEVICE)
 
-            decoder_outputs, _ = net(
-                input_tensor, None)
+            # No Teacher forcing since we are in validation mode
+            predictions = net(input_tensor)
 
             loss = criterion(
-                decoder_outputs,
+                predictions,
                 target_tensor
             )
 
@@ -185,9 +197,12 @@ def setup_training(config, agent_idx=-1):
     # Get the output size by sampling a single label
     output_size = next(iter(train_loader))[1][0].shape[-1]
 
-    net = Seq2SeqRNN(config, input_size, output_size,
-                     use_attention=False).to(DEVICE)
+    net = Seq2SeqRNN(config, input_size, output_size).to(DEVICE)
 
+    # encoder = EncoderRNN(config, input_size=input_size,
+    #                      dropout_p=0.1).to(DEVICE)
+    # decoder = AttnDecoderRNN(config, output_size, dropout_p=0.1).to(DEVICE)
+    # return train_loader, valid_loader, test_dataset, test_loader, encoder, decoder
     return train_loader, valid_loader, test_dataset, test_loader, net
 
 
@@ -212,11 +227,12 @@ if __name__ == "__main__":
                              net=net,
                              learning_rate=0.001)
 
+    for j in range(10):
+        plot_forecast_example(CONFIG, test_dataset, net, to_plot_idx=j)
+
     # Save logs and weights the trained models
     run_results_dir = os.path.join(CONFIG["RESULTS_DIR"], CONFIG["MODEL_NAME"])
     os.makedirs(run_results_dir, exist_ok=True)
-    torch.save(encoder, os.path.join(run_results_dir, "encoder.pt"))
-    torch.save(decoder, os.path.join(run_results_dir, "decoder.pt"))
 
     # Also save a copy of the relative config file
     with open(os.path.join(run_results_dir, "config.json"), 'w') as f:
