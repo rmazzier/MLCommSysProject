@@ -1,23 +1,23 @@
 from collections import OrderedDict
-from typing import List, Tuple
+from typing import List
 
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from datasets.utils.logging import disable_progress_bar
-from torch.utils.data import DataLoader
 
 import flwr as fl
-from flwr.common import Metrics
-from flwr_datasets import FederatedDataset
 
-from constants import DEVICE
-from models import EncoderRNN, DecoderRNN
+
+from constants import DEVICE, CONFIG
 from train import train_epoch, test_step, setup_training
 
-# disable_progress_bar()
+"""
+We need two helper functions to update the local model with parameters received from
+the server and to get the updated model parameters from the local model:
+set_parameters and get_parameters.
+The following two functions do that.
+"""
 
 
 def set_parameters(net, parameters: List[np.ndarray]):
@@ -32,43 +32,89 @@ def set_parameters(net, parameters: List[np.ndarray]):
 
 def get_parameters(net) -> List[np.ndarray]:
     """
-    Get the parameters of the network. 
+    Get the parameters of the network.
     Used when communicating from the client to the server.
     """
+
     return [val.cpu().numpy() for _, val in net.state_dict().items()]
 
 
+"""
+In Flower, clients are subclasses of flwr.client.Client or flwr.client.NumPyClient.
+(I still don't know the difference between the two)
+
+Then, we must implement the following three methods:
+- get_parameters: Get the current model parameters.
+- fit: Update the model using the provided parameters and return the updated parameters to the server
+- evaluate: Evaluate the model using the provided parameters and return evaluation to the server.
+"""
+
+
 class FlowerClient(fl.client.NumPyClient):
-    def __init__(self, config, trainloader, valloader, encoder, decoder, encoder_optimizer,):
-        self.config = config
+    def __init__(self, my_config, net, trainloader, valloader, optimizer, criterion, max_iters=100):
+        self.my_config = my_config
         self.trainloader = trainloader
         self.valloader = valloader
-        self.encoder = encoder
-        self.decoder = decoder
-        self.encoder_optimizer = encoder_optimizer
-        self.criterion = nn.L1Loss()
+        self.net = net
+        self.optimizer = optimizer
+        self.criterion = criterion
+        self.max_iters = max_iters
 
-    def get_parameters(self):
+    def get_parameters(self, config):
+        print("Getting parameters!")
         return get_parameters(self.net)
 
-    def fit(self, parameters):
+    def fit(self, parameters, config):
+        print("Fitting client")
         set_parameters(self.net, parameters)
-        train_epoch(
+        train_loss, valid_loss = train_epoch(
+            self.my_config,
             self.trainloader,
             self.valloader,
-            encoder=self.encoder,
-            decoder=self.decoder,
-            encoder_optimizer=self.encoder_optimizer,
-            decoder_optimizer=self.decoder_optimizer,
+            net=self.net,
+            optimizer=self.optimizer,
             criterion=self.criterion,
-            teacher_forcing=False,
             max_iters=100)
-        return get_parameters(self.net), len(self.trainloader), {}
+        return self.get_parameters({}), len(self.trainloader), {}
 
-    def evaluate(self, parameters):
-        # Still wip
+    def evaluate(self, parameters, config):
 
-        # set_parameters(self.net, parameters)
-        # loss, accuracy = test(self.net, self.valloader)
-        # return float(loss), len(self.valloader), {"accuracy": float(accuracy)}
+        print("Evaluating client")
+
+        set_parameters(self.net, parameters)
+        valid_loss = test_step(self.valloader, self.net, self.criterion)
+        return float(valid_loss), len(self.valloader), {"valid_loss": float(valid_loss)}
         pass
+
+
+def client_fn(cid, config) -> FlowerClient:
+    """Create a Flower client representing a single organization."""
+
+    print(f"Creating client {cid}")
+
+    cid = int(cid)
+    train_loader, valid_loader, _, _, net = setup_training(
+        config, agent_idx=cid)
+
+    # Load model
+    net = net.to(DEVICE)
+
+    # optimizer
+    optimizer = torch.optim.Adam(net.parameters(), lr=.001)
+
+    # Loss function
+    if config["CRITERION"] == "MSE":
+        criterion = nn.MSELoss()
+    elif config["CRITERION"] == "MAE":
+        criterion = nn.L1Loss()
+    else:
+        raise ValueError("Invalid criterion")
+
+    # Create a  single Flower client representing a single organization
+    return FlowerClient(config,
+                        net,
+                        train_loader,
+                        valid_loader,
+                        optimizer,
+                        criterion,
+                        max_iters=100).to_client()

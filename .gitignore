@@ -1,5 +1,5 @@
 __pycache__
-
+.vscode
 data
 check_gpu.py
 mlcomsys

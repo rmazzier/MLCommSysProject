@@ -28,7 +28,7 @@ def train_epoch(
     # Training
     net.train()
 
-    for i, data in tqdm(enumerate(train_dataloader)):
+    for i, data in enumerate(train_dataloader):
         if max_iters is not None and i >= max_iters:
             break
         input_tensor, target_tensor = data
@@ -51,28 +51,30 @@ def train_epoch(
         optimizer.step()
 
         total_loss_train += loss.item()
+    total_loss_train = total_loss_train / len(train_dataloader)
 
     # Validation
-    net.eval()
+    # net.eval()
 
-    with torch.no_grad():
-        for i, data in tqdm(enumerate(valid_dataloader)):
-            input_tensor, target_tensor = data
-            input_tensor = input_tensor.float().to(DEVICE)
-            target_tensor = target_tensor.float().to(DEVICE)
+    # with torch.no_grad():
+    #     for i, data in tqdm(enumerate(valid_dataloader)):
+    #         input_tensor, target_tensor = data
+    #         input_tensor = input_tensor.float().to(DEVICE)
+    #         target_tensor = target_tensor.float().to(DEVICE)
 
-            # No Teacher forcing since we are in validation mode
-            predictions = net(input_tensor)
+    #         # No Teacher forcing since we are in validation mode
+    #         predictions = net(input_tensor)
 
-            loss = criterion(
-                predictions,
-                target_tensor
-            )
+    #         loss = criterion(
+    #             predictions,
+    #             target_tensor
+    #         )
 
-            total_loss_valid += loss.item()
+    #         total_loss_valid += loss.item()
 
-    total_loss_train = total_loss_train / len(train_dataloader)
-    total_loss_valid = total_loss_valid / len(valid_dataloader)
+    # total_loss_valid = total_loss_valid / len(valid_dataloader)
+
+    total_loss_valid = test_step(valid_dataloader, net, criterion)
 
     return total_loss_train, total_loss_valid
 
@@ -89,7 +91,7 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, net, lear
         mode=config["WANDB_MODE"],
     )
 
-    wandb.watch(net)
+    # wandb.watch(net)
 
     optimizer = optim.Adam(
         net.parameters(), lr=learning_rate, weight_decay=0.001)
@@ -127,13 +129,14 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, net, lear
             wandb.save(os.path.join(run_results_dir, "model_weights.pt"))
 
     # Test phase
-    test_step(config, test_dataloader, net, criterion)
+    test_loss = test_step(test_dataloader, net, criterion)
+    wandb.log({"Test Loss": test_loss})
 
     run.finish()
     return encoder, decoder
 
 
-def test_step(config, test_dataloader, net, criterion):
+def test_step(test_dataloader, net, criterion):
     net.eval()
     test_loss = 0
     with torch.no_grad():
@@ -153,8 +156,8 @@ def test_step(config, test_dataloader, net, criterion):
             test_loss += loss.item()
 
     test_loss = test_loss / len(test_dataloader)
-    print(f"Test Loss: {test_loss}")
-    wandb.log({"Test Loss": test_loss})
+    # print(f"Test Loss: {test_loss}")
+    return test_loss
 
 
 def setup_training(config, agent_idx=-1):
