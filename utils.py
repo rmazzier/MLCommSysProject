@@ -4,8 +4,10 @@ import os
 import matplotlib.pyplot as plt
 from constants import DEVICE
 import numpy as np
+import flwr as fl
 
 import torch
+from collections import OrderedDict
 
 
 class SPLIT(enum.Enum):
@@ -77,9 +79,67 @@ def plot_forecast_example(config, test_dataset, trained_net, to_plot_idx=0, suff
         # plt.show()
 
 
-def plot_predictions_long():
-    # TODO: implement this
-    pass
+def plot_predictions_long(config, start_idx, n_to_plot, test_dataset, trained_net):
+
+    # Now, I want the test dataset to be ordered, so I have to order the test_dataset.filepaths
+    filepaths = [path.split("/")[-1].split(".")[0].split("_")[-3:]
+                 for path in test_dataset.filepaths]
+
+    filepaths = [int(fp[0])*10000+int(fp[1])*1000 +
+                 int(fp[2])*1 for fp in filepaths]
+
+    argsort = torch.argsort(torch.tensor(filepaths))
+    test_dataset.filepaths = [test_dataset.filepaths[i] for i in argsort]
+
+    trained_net.eval()
+
+    ground_truths_list = []
+    predictions_list = []
+
+    with torch.no_grad():
+        counter = 0
+        for seq, target in test_dataset:
+            if counter % 100 == 0:
+                print(f"Counter: {counter}/{len(test_dataset)}")
+            if counter < start_idx:
+                counter += 1
+                continue
+            if counter >= n_to_plot + start_idx:
+                break
+
+            input_tensor = seq.unsqueeze(0).float().to(DEVICE)
+            target_tensor = target.unsqueeze(0).float().to(DEVICE)
+
+            preds = trained_net(input_tensor)
+
+            ground_truths_list.append(target_tensor.cpu().numpy())
+            predictions_list.append(preds.cpu().numpy())
+            counter += 1
+
+    ground_truths_array = np.concatenate(ground_truths_list, axis=0)
+    ground_truths_array = np.concatenate(ground_truths_array, axis=0)
+
+    predictions_array = np.concatenate(predictions_list, axis=0)
+    predictions_array = np.concatenate(predictions_array, axis=0)
+
+    # Plot
+    _, ax = plt.subplots(3, 1, figsize=(10, 10))
+
+    feature_names = ["# of Users", "Downlink (Bit/s)", "Uplink (Bit/s)"]
+    for i in range(3):
+        # Plot ground truth with a dashed blue line
+        ax[i].plot(ground_truths_array[:, i],
+                   label="Ground Truth" if i == 2 else None, linestyle="--")
+        # Plot predictions with a solid orange line
+        ax[i].plot(predictions_array[:, i],
+                   label="Prediction" if i == 2 else None)
+        ax[i].set_title(feature_names[i])
+        ax[i].grid(alpha=0.5)
+        if i == 2:
+            ax[i].legend(loc="upper right")
+
+    plt.savefig(os.path.join(
+        config["RESULTS_DIR"], config["MODEL_NAME"], f"all_forecasts_{start_idx}-{start_idx+n_to_plot}.png"))
 
 
 def interpolate_missing_values(data):
@@ -142,3 +202,41 @@ def interp_discontinuities(data, max_interp_width):
 
     new_data = np.array(new_data)
     return new_data
+
+
+def load_model(config, net):
+    model_path = os.path.join(
+        config["RESULTS_DIR"], config["MODEL_NAME"], "model_weights.pt")
+
+    net.load_state_dict(torch.load(model_path))
+
+    return net
+
+
+def load_model_from_npz(config, net):
+
+    model_dir = os.path.join(
+        config["RESULTS_DIR"], config["MODEL_NAME"])
+
+    # Take all the files ending with npz and take the one with the highest round number
+    # files are named as follows: "round-<round_number>-weights.npz"
+    files = [f for f in os.listdir(model_dir) if f.endswith(".npz")]
+    rounds = [int(f.split("-")[1]) for f in files]
+    argmax = np.argmax(rounds)
+    file = files[argmax]
+    filepath = os.path.join(model_dir, file)
+
+    # Load npz file
+    weights_npz = np.load(filepath).values()
+
+    # Convert `Parameters` to `List[np.ndarray]`
+    # aggregated_ndarrays = fl.common.parameters_to_ndarrays(
+    #     weights_npz)
+
+    # Convert `List[np.ndarray]` to PyTorch`state_dict`
+    params_dict = zip(net.state_dict().keys(), weights_npz)
+    state_dict = OrderedDict({k: torch.tensor(v)
+                              for k, v in params_dict})
+    net.load_state_dict(state_dict, strict=True)
+
+    return net

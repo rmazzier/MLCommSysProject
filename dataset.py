@@ -252,6 +252,10 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         for i in tqdm(range(len(data))):
             data[i, -1] = get_date_from_overalltime(data[i, 0]).hour
 
+        # convert column 5 and 13 from bit/s to Mbit/s
+        data[:, 5] = data[:, 5] / 1e6
+        data[:, 13] = data[:, 13] / 1e6
+
         # standardize data
         print("Standardizing data...")
         if standardize:

@@ -31,6 +31,7 @@ CONFIG = {
     "RESULTS_DIR": os.path.join("results"),
 
     # Dataset parameters
+    "AGENT_IDX": -1,
     "CROP_LENGTH": 60,
     "CROP_STEP": 10,
     "N_TO_PREDICT": 10,
@@ -41,20 +42,23 @@ CONFIG = {
     # "FEATURES_TO_REMOVE": [],
     "MAX_INTERP_WIDTH": 3,
     # RNN parameters
-    "CRITERION": "MSE",
-    "EPOCHS": 100,
+    "CRITERION": "MAE",
+    "EPOCHS": 20,
     "BATCH_SIZE": 128,
     "HIDDEN_SIZE": 64,
-    "TEACHER_FORCING": True,
+    "TEACHER_FORCING": False,
     "NUM_LAYERS": 3,
     "CELL_TYPE": "GRU",
     "BIDIRECTIONAL": False,
     "ATTENTION": True,
 
     # --- WANDB VARIABLES ---
-    "MODEL_NAME": "S2S_GRU_Att_CL60CS10_TF_MSE",
+    "MODEL_NAME": "S2S_GRU_Att_CL60CS10_MAE_V2",
     "WANDB_MODE": "online",
     # "WANDB_MODE": "disabled",
-    "NOTES": "With MSE",
+    "WANDB_GROUP": "FedAvg",
+    "WANDB_TAGS": ["Dev"],
+    "NOTES": "Removed Teacher Forcing",
+
 
 }

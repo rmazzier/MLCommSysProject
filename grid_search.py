@@ -32,7 +32,7 @@ if __name__ == "__main__":
                 test_dataloader=test_loader,
                 encoder=encoder,
                 decoder=decoder,
-                learning_rate=0.001,
+                learning_rate=0.0001,
             )
 
             # save logs and models

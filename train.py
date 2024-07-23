@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from dataset import Rastro_Dataset
 from constants import DEVICE
-from utils import plot_forecast_example, SPLIT
+from utils import plot_forecast_example, SPLIT, plot_predictions_long
 from models import Seq2SeqRNN, EncoderRNN, AttnDecoderRNN
 
 
@@ -51,7 +51,7 @@ def train_epoch(
         optimizer.step()
 
         total_loss_train += loss.item()
-    total_loss_train = total_loss_train / len(train_dataloader)
+    total_loss_train = total_loss_train / i
 
     # Validation
     # net.eval()
@@ -74,12 +74,13 @@ def train_epoch(
 
     # total_loss_valid = total_loss_valid / len(valid_dataloader)
 
-    total_loss_valid = test_step(valid_dataloader, net, criterion)
+    total_loss_valid, total_rmse_valid = test_step(
+        valid_dataloader, net, criterion)
 
-    return total_loss_train, total_loss_valid
+    return total_loss_train, total_loss_valid, total_rmse_valid
 
 
-def train(config, train_dataloader, valid_dataloader, test_dataloader, net, learning_rate=0.001):
+def train(config, train_dataloader, valid_dataloader, test_dataloader, net, learning_rate=0.0001):
 
     wandb.login()
     run = wandb.init(
@@ -89,6 +90,8 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, net, lear
         notes=config["NOTES"],
         reinit=True,
         mode=config["WANDB_MODE"],
+        group=config["WANDB_GROUP"],
+        tags=config["WANDB_TAGS"]
     )
 
     # wandb.watch(net)
@@ -109,15 +112,16 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, net, lear
 
     for epoch in range(1, config["EPOCHS"] + 1):
         print(f"Start epoch {epoch}")
-        train_loss, valid_loss = train_epoch(config,
-                                             train_dataloader,
-                                             valid_dataloader,
-                                             net,
-                                             optimizer,
-                                             criterion)
+        train_loss, valid_loss, valid_rmse = train_epoch(config,
+                                                         train_dataloader,
+                                                         valid_dataloader,
+                                                         net,
+                                                         optimizer,
+                                                         criterion)
 
         wandb.log({"Train Loss": train_loss,
-                   "Validation Loss": valid_loss}, step=epoch)
+                   "Validation Loss": valid_loss,
+                   "Validation RMSE": valid_rmse}, step=epoch)
 
         if valid_loss < best_valid_loss and config["WANDB_MODE"] == "online":
             best_valid_loss = valid_loss
@@ -129,16 +133,18 @@ def train(config, train_dataloader, valid_dataloader, test_dataloader, net, lear
             wandb.save(os.path.join(run_results_dir, "model_weights.pt"))
 
     # Test phase
-    test_loss = test_step(test_dataloader, net, criterion)
-    wandb.log({"Test Loss": test_loss})
+    test_loss, test_rmse = test_step(test_dataloader, net, criterion)
+    wandb.log({"Test Loss": test_loss,
+               "Test RMSE": test_rmse})
 
     run.finish()
-    return encoder, decoder
+    return net
 
 
 def test_step(test_dataloader, net, criterion):
     net.eval()
     test_loss = 0
+    test_rmse = 0
     with torch.no_grad():
         for i, data in tqdm(enumerate(test_dataloader)):
             input_tensor, target_tensor = data
@@ -153,11 +159,15 @@ def test_step(test_dataloader, net, criterion):
                 target_tensor
             )
 
+            rmse = torch.sqrt(torch.mean((predictions - target_tensor)**2))
+
+            test_rmse += rmse.item()
             test_loss += loss.item()
 
     test_loss = test_loss / len(test_dataloader)
+    test_rmse = test_rmse / len(test_dataloader)
     # print(f"Test Loss: {test_loss}")
-    return test_loss
+    return test_loss, test_rmse
 
 
 def setup_training(config, agent_idx=-1):
@@ -216,6 +226,12 @@ if __name__ == "__main__":
     Rastro_Dataset.generate_data(
         config=CONFIG, split_seed=123, standardize=True)
 
+    run_results_dir = os.path.join(CONFIG["RESULTS_DIR"], CONFIG["MODEL_NAME"])
+    os.makedirs(run_results_dir, exist_ok=True)
+    # Also save a copy of the relative config file
+    with open(os.path.join(run_results_dir, "config.json"), 'w') as f:
+        json.dump(CONFIG, f)
+
     # Rastro_Dataset.generate_data_simple(
     #     config=CONFIG, split_seed=123, standardize=True
     # )
@@ -223,23 +239,16 @@ if __name__ == "__main__":
     train_loader, valid_loader, test_dataset, test_loader, net = setup_training(
         CONFIG, agent_idx=-1)
 
-    encoder, decoder = train(config=CONFIG,
-                             train_dataloader=train_loader,
-                             valid_dataloader=valid_loader,
-                             test_dataloader=test_loader,
-                             net=net,
-                             learning_rate=0.001)
+    net = train(config=CONFIG,
+                train_dataloader=train_loader,
+                valid_dataloader=valid_loader,
+                test_dataloader=test_loader,
+                net=net,
+                learning_rate=0.0001)
 
-    for j in range(10):
-        plot_forecast_example(CONFIG, test_dataset, net, to_plot_idx=j)
+    START_IDX = 100
+    N_TO_PLOT = 200
 
-    # Save logs and weights the trained models
-    run_results_dir = os.path.join(CONFIG["RESULTS_DIR"], CONFIG["MODEL_NAME"])
-    os.makedirs(run_results_dir, exist_ok=True)
-
-    # Also save a copy of the relative config file
-    with open(os.path.join(run_results_dir, "config.json"), 'w') as f:
-        json.dump(CONFIG, f)
-
+    plot_predictions_long(CONFIG, START_IDX, N_TO_PLOT, test_dataset, net)
     # Plot an example of forecasting from the test set
     # plot_forecast_example(test_dataset, encoder, decoder)
