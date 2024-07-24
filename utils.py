@@ -82,6 +82,7 @@ def plot_forecast_example(config, test_dataset, trained_net, to_plot_idx=0, suff
 def plot_predictions_long(config, start_idx, n_to_plot, test_dataset, trained_net):
 
     # Now, I want the test dataset to be ordered, so I have to order the test_dataset.filepaths
+    # The filenames are train_crop_agent_<idx>_<subset>_<cropidx>.npy
     filepaths = [path.split("/")[-1].split(".")[0].split("_")[-3:]
                  for path in test_dataset.filepaths]
 

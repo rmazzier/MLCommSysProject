@@ -1,42 +1,59 @@
 import os
+import json
 
 from dataset import Rastro_Dataset
 from train import setup_training, train
 from utils import plot_predictions_long
 
-if __name__ == "__main__":
-    from constants import CONFIG
-    import json
 
-    CONFIG["WANDB_GROUP"] = "Centralized"
+def train_all_clients(config, data_gen_method):
+    config["WANDB_GROUP"] = "Centralized"
 
-    Rastro_Dataset.generate_data(
-        config=CONFIG, split_seed=123, standardize=True)
+    data_gen_method(
+        config=config, split_seed=123, standardize=True)
 
     for agent_idx in range(4):
-        CONFIG["MODEL_NAME"] = f"AGT{agent_idx}_{CONFIG['MODEL_NAME']}"
-        CONFIG["AGENT_IDX"] = agent_idx
+        train_agent_by_index(config, agent_idx)
 
-        run_results_dir = os.path.join(
-            CONFIG["RESULTS_DIR"], CONFIG["MODEL_NAME"])
-        os.makedirs(run_results_dir, exist_ok=True)
-        # Also save a copy of the relative config file
-        with open(os.path.join(run_results_dir, "config.json"), 'w') as f:
-            json.dump(CONFIG, f)
 
-        train_loader, valid_loader, test_dataset, test_loader, net = setup_training(
-            CONFIG, agent_idx=CONFIG["AGENT_IDX"])
+def train_agent_by_index(config, agent_idx):
+    agent_config = config.copy()
+    agent_config["MODEL_NAME"] = f"AGT{agent_idx}_{agent_config['MODEL_NAME']}"
+    agent_config["AGENT_IDX"] = agent_idx
 
-        net = train(config=CONFIG,
-                    train_dataloader=train_loader,
-                    valid_dataloader=valid_loader,
-                    test_dataloader=test_loader,
-                    net=net,
-                    learning_rate=0.0001)
+    run_results_dir = os.path.join(
+        agent_config["RESULTS_DIR"], agent_config["MODEL_NAME"])
 
-        START_IDX = 100
-        N_TO_PLOT = 200
+    # Check if it exists:
+    if os.path.exists(run_results_dir):
+        print("Results directory already exists. Exiting...")
+        return
 
-        plot_predictions_long(CONFIG, START_IDX, N_TO_PLOT, test_dataset, net)
-        # Plot an example of forecasting from the test set
-        # plot_forecast_example(test_dataset, encoder, decoder)
+    os.makedirs(run_results_dir, exist_ok=True)
+    # Also save a copy of the relative agent_config file
+    with open(os.path.join(run_results_dir, "config.json"), 'w') as f:
+        json.dump(agent_config, f)
+
+    train_loader, valid_loader, test_dataset, test_loader, net = setup_training(
+        agent_config, agent_idx=agent_config["AGENT_IDX"])
+
+    net = train(config=agent_config,
+                train_dataloader=train_loader,
+                valid_dataloader=valid_loader,
+                test_dataloader=test_loader,
+                net=net,
+                learning_rate=0.0001)
+
+    START_IDX = 100
+    N_TO_PLOT = 200
+
+    plot_predictions_long(agent_config, START_IDX,
+                          N_TO_PLOT, test_dataset, net)
+
+
+if __name__ == "__main__":
+    from constants import CONFIG
+
+    train_all_clients(CONFIG, Rastro_Dataset.generate_data)
+    # Plot an example of forecasting from the test set
+    # plot_forecast_example(test_dataset, encoder, decoder)

@@ -159,7 +159,10 @@ def test_step(test_dataloader, net, criterion):
                 target_tensor
             )
 
-            rmse = torch.sqrt(torch.mean((predictions - target_tensor)**2))
+            # rmse = torch.sqrt(torch.mean((predictions - target_tensor)**2))
+
+            mses = torch.mean((predictions - target_tensor)**2, axis=-1)
+            rmse = torch.mean(torch.sqrt(mses))
 
             test_rmse += rmse.item()
             test_loss += loss.item()

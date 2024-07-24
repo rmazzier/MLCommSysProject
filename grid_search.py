@@ -1,48 +1,36 @@
+
+from dataset import Rastro_Dataset
+from train_clients import train_all_clients
+from fl_simulation import train_federated
+from fl_setup import FedAvgWandb, weighted_average_fit, weighted_average_eval
 import os
 
-import torch
-from train import train, setup_training, plot_forecast_example
-from models import EncoderRNN, DecoderRNN
-from dataset import Rastro_Dataset
-
 if __name__ == "__main__":
+
     from constants import CONFIG
-    from utils import SPLIT
-    import json
 
-    crop_lengths_to_test = [30, 50, 70]
-    n_to_predict = [1, 5, 10]
+    # Crop lenghts to test
+    crop_lengths = [10, 20, 30, 40, 50, 60]
+    for crop_length in crop_lengths:
+        print(f"Testing crop length {crop_length}")
+        run_config = CONFIG.copy()
+        run_config["CROP_LENGTH"] = crop_length
+        run_config["MODEL_NAME"] = f"CL{crop_length}_{run_config['MODEL_NAME']}"
 
-    for crop_length in crop_lengths_to_test:
-        for n_predict in n_to_predict:
-            CONFIG["CROP_LENGTH"] = crop_length
-            CONFIG["N_TO_PREDICT"] = n_predict
+        # Generate the data
+        Rastro_Dataset.generate_data(
+            run_config, split_seed=123, standardize=True)
 
-            CONFIG["MODEL_NAME"] = f"S2S_CL{crop_length}_NTP{n_predict}"
-            CONFIG["NOTES"] = f"Testing crop length {crop_length} and n to predict {n_predict}"
+        strategy = FedAvgWandb(
+            my_config=run_config,
+            fraction_fit=1.0,  # Sample 100% of available clients for training
+            fraction_evaluate=1.0,  # Sample 50% of available clients for evaluation
+            min_fit_clients=4,  # Never sample less than 10 clients for training
+            min_evaluate_clients=4,  # Never sample less than 5 clients for evaluation
+            min_available_clients=4,  # Wait until all 10 clients are available
+            fit_metrics_aggregation_fn=weighted_average_fit,
+            evaluate_metrics_aggregation_fn=weighted_average_eval,
+        )
 
-            Rastro_Dataset.generate_data(config=CONFIG, split_seed=123)
-            train_loader, valid_loader, test_dataset, test_loader, encoder, decoder = setup_training(
-                CONFIG)
-
-            train(
-                config=CONFIG,
-                train_dataloader=train_loader,
-                valid_dataloader=valid_loader,
-                test_dataloader=test_loader,
-                encoder=encoder,
-                decoder=decoder,
-                learning_rate=0.0001,
-            )
-
-            # save logs and models
-            # Save logs and weights the trained models
-            run_results_dir = os.path.join(
-                CONFIG["RESULTS_DIR"], CONFIG["MODEL_NAME"])
-            os.makedirs(run_results_dir, exist_ok=True)
-            torch.save(encoder, os.path.join(run_results_dir, "encoder.pt"))
-            torch.save(decoder, os.path.join(run_results_dir, "decoder.pt"))
-
-            # Also save a copy of the relative config file
-            with open(os.path.join(run_results_dir, "config.json"), 'w') as f:
-                json.dump(CONFIG, f)
+        train_federated(run_config, strategy, n_rounds=50)
+        train_all_clients(run_config, Rastro_Dataset.generate_data)

@@ -53,12 +53,12 @@ CONFIG = {
     "ATTENTION": True,
 
     # --- WANDB VARIABLES ---
-    "MODEL_NAME": "S2S_GRU_Att_CL60CS10_MAE_V2",
+    "MODEL_NAME": "S2S_Final",
     "WANDB_MODE": "online",
     # "WANDB_MODE": "disabled",
-    "WANDB_GROUP": "FedAvg",
-    "WANDB_TAGS": ["Dev"],
-    "NOTES": "Removed Teacher Forcing",
+    "WANDB_GROUP": "",
+    "WANDB_TAGS": ["Final"],
+    "NOTES": "Hopefully final runs",
 
 
 }

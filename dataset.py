@@ -130,6 +130,14 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         data_path = config["RAW_DATA_PATH"]
         data = pd.read_csv(data_path).to_numpy()
 
+        # The data has some time gaps in the measurements.
+        # This is a problem, because each time step in the time series must represent
+        # a coherent time interval (a second)
+        # Here, we add the missing timestamps, only if the gap is less than MAX_INTERP_WIDTH
+        # Note that the timestamp is added as the missing time index,
+        # and the other features are filled with NaNs, which we will interpolate later.
+        data = interp_discontinuities(data, config["MAX_INTERP_WIDTH"])
+
         # Percentage of entries with missing values
         data = interpolate_missing_values(data)
 
@@ -145,6 +153,10 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         for i in tqdm(range(len(data))):
             data[i, -1] = get_date_from_overalltime(data[i, 0]).hour
 
+        # convert column 5 and 13 from bit/s to Mbit/s
+        data[:, 5] = data[:, 5] / 1e6
+        data[:, 13] = data[:, 13] / 1e6
+
         if standardize:
             # standardize data
             data_std = (data - data.mean(axis=0)) / data.std(axis=0)
@@ -155,7 +167,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
         # perform cropping
         cropped_dataset = crop_with_step(
-            data_std, config["CROP_LENGTH"] + config["N_TO_PREDICT"],  config["CROP_LENGTH"] + config["N_TO_PREDICT"])
+            data_std, config["CROP_LENGTH"] + config["N_TO_PREDICT"],  config["CROP_STEP"])
 
         agent_idx = 0
         start_t = data[0, 0]
@@ -183,15 +195,15 @@ class Rastro_Dataset(torch.utils.data.Dataset):
                 # Save the crops in the corresponding directories
                 for k, train_crop in enumerate(train):
                     np.save(os.path.join(agent_directory,
-                            "train", f"train_crop_{agent_idx}_{k}"), train_crop)
+                            "train", f"train_crop_{agent_idx}_{k}_0"), train_crop)
 
                 for k, valid_crop in enumerate(valid):
                     np.save(os.path.join(agent_directory,
-                            "valid", f"valid_crop_{agent_idx}_{k}"), valid_crop)
+                            "valid", f"valid_crop_{agent_idx}_{k}_0"), valid_crop)
 
                 for k, test_crop in enumerate(test):
                     np.save(os.path.join(agent_directory,
-                            "test", f"test_crop_{agent_idx}_{k}"), test_crop)
+                            "test", f"test_crop_{agent_idx}_{k}_0"), test_crop)
 
                 # Setup for next agent
                 agent_idx += 1
@@ -200,6 +212,20 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
                 agent_directory = os.path.join(
                     config["GEN_DATA_DIR"], f"agent_{agent_idx}")
+
+        # For each agent print the number of samples in train, validation and test
+        for j in range(agent_idx):
+            train_samples = len(os.listdir(os.path.join(
+                config["GEN_DATA_DIR"], f"agent_{j}", "train")))
+            valid_samples = len(os.listdir(os.path.join(
+                config["GEN_DATA_DIR"], f"agent_{j}", "valid")))
+            test_samples = len(os.listdir(os.path.join(
+                config["GEN_DATA_DIR"], f"agent_{j}", "test")))
+
+            print(
+                f"Agent {j}: Train samples: {train_samples}, Validation samples: {valid_samples}, Test samples: {test_samples}")
+
+        print("Data generation completed")
 
         pass
 
