@@ -140,7 +140,7 @@ def plot_predictions_long(config, start_idx, n_to_plot, test_dataset, trained_ne
             ax[i].legend(loc="upper right")
 
     plt.savefig(os.path.join(
-        config["RESULTS_DIR"], config["MODEL_NAME"], f"all_forecasts_{start_idx}-{start_idx+n_to_plot}.png"))
+        config["RESULTS_DIR"], config["MODEL_NAME"], f"all_forecasts_{start_idx}-{start_idx+n_to_plot}.pdf"))
 
 
 def interpolate_missing_values(data):

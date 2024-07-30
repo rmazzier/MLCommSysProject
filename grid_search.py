@@ -10,7 +10,8 @@ if __name__ == "__main__":
     from constants import CONFIG
 
     # Crop lenghts to test
-    crop_lengths = [10, 20, 30, 40, 50, 60]
+    # crop_lengths = [10, 20, 30, 40, 50, 60]
+    crop_lengths = [20, 30, 40, 50, 60]
     for crop_length in crop_lengths:
         print(f"Testing crop length {crop_length}")
         run_config = CONFIG.copy()
@@ -32,5 +33,5 @@ if __name__ == "__main__":
             evaluate_metrics_aggregation_fn=weighted_average_eval,
         )
 
-        train_federated(run_config, strategy, n_rounds=50)
-        train_all_clients(run_config, Rastro_Dataset.generate_data)
+        train_federated(run_config, strategy, n_rounds=100)
+        # train_all_clients(run_config, Rastro_Dataset.generate_data)

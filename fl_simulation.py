@@ -4,7 +4,7 @@ import os
 import json
 
 from constants import DEVICE, CONFIG
-from fl_setup import client_fn, FedAvgWandb, weighted_average_eval, weighted_average_fit
+from fl_setup import client_fn, FedAvgWandb, weighted_average_eval, weighted_average_fit, FedProxWandb
 from utils import load_model_from_npz, plot_predictions_long
 from train import setup_training
 

@@ -48,12 +48,12 @@ CONFIG = {
     "HIDDEN_SIZE": 64,
     "TEACHER_FORCING": False,
     "NUM_LAYERS": 3,
-    "CELL_TYPE": "GRU",
+    "CELL_TYPE": "LSTM",
     "BIDIRECTIONAL": False,
     "ATTENTION": True,
 
     # --- WANDB VARIABLES ---
-    "MODEL_NAME": "S2S_Final",
+    "MODEL_NAME": "S2S_Final_MoreRounds",
     "WANDB_MODE": "online",
     # "WANDB_MODE": "disabled",
     "WANDB_GROUP": "",

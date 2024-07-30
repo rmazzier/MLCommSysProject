@@ -218,22 +218,88 @@ class FedAvgWandb(fl.server.strategy.FedAvg):
 
         wandb.log(metrics_aggregated, step=server_round)
 
-        # if aggregated_parameters is not None:
-        #     print(f"Saving round {server_round} aggregated_parameters...")
+        if aggregated_parameters is not None:
+            # Convert `Parameters` to `List[np.ndarray]`
+            aggregated_ndarrays: List[np.ndarray] = fl.common.parameters_to_ndarrays(
+                aggregated_parameters)
 
-        #     # Convert `Parameters` to `List[np.ndarray]`
-        #     aggregated_ndarrays: List[np.ndarray] = fl.common.parameters_to_ndarrays(
-        #         aggregated_parameters)
+            # Save aggregated_ndarrays
+            print(f"Saving round {server_round} aggregated_ndarrays...")
+            save_dir = os.path.join(
+                self.my_config["RESULTS_DIR"], self.my_config["MODEL_NAME"])
+            os.makedirs(save_dir, exist_ok=True)
+            np.savez(os.path.join(
+                save_dir, f"round-{server_round}-weights.npz"), *aggregated_ndarrays)
 
-        #     # Convert `List[np.ndarray]` to PyTorch`state_dict`
-        #     params_dict = zip(net.state_dict().keys(), aggregated_ndarrays)
-        #     state_dict = OrderedDict({k: torch.tensor(v)
-        #                              for k, v in params_dict})
-        #     net.load_state_dict(state_dict, strict=True)
+        return aggregated_parameters, metrics_aggregated
 
-        #     # Save the model
-        #     torch.save(net.state_dict(), f"model_round_{server_round}.pth")
-        #     return aggregated_parameters, metrics_aggregated
+    def aggregate_evaluate(
+        self,
+        server_round: int,
+        results,
+        failures,
+    ):
+        print("Aggregating metrics")
+        loss_aggregated, metrics_aggregated = super(
+        ).aggregate_evaluate(server_round, results, failures)
+        wandb.log(metrics_aggregated, step=server_round)
+        print(loss_aggregated, metrics_aggregated)
+        return loss_aggregated, metrics_aggregated
+
+
+class FedProxWandb(fl.server.strategy.FedProx):
+    def __init__(self,
+                 *,
+                 my_config,
+                 fraction_fit: float = 1.0,
+                 fraction_evaluate: float = 1.0,
+                 min_fit_clients: int = 2,
+                 min_evaluate_clients: int = 2,
+                 min_available_clients: int = 2,
+                 evaluate_fn: Optional[
+                     Callable[
+                         [int, NDArrays, Dict[str, Scalar]],
+                         Optional[Tuple[float, Dict[str, Scalar]]],
+                     ]
+                 ] = None,
+                 on_fit_config_fn: Optional[Callable[[
+                     int], Dict[str, Scalar]]] = None,
+                 on_evaluate_config_fn: Optional[Callable[[
+                     int], Dict[str, Scalar]]] = None,
+                 initial_parameters: Optional[Parameters] = None,
+                 accept_failures: bool = True,
+                 fit_metrics_aggregation_fn: Optional[MetricsAggregationFn] = None,
+                 evaluate_metrics_aggregation_fn: Optional[MetricsAggregationFn] = None,
+                 proximal_multiplier: float = 1.0,
+                 ) -> None:
+        super().__init__(
+            fraction_fit=fraction_fit,
+            fraction_evaluate=fraction_evaluate,
+            min_fit_clients=min_fit_clients,
+            min_evaluate_clients=min_evaluate_clients,
+            min_available_clients=min_available_clients,
+            evaluate_fn=evaluate_fn,
+            on_fit_config_fn=on_fit_config_fn,
+            on_evaluate_config_fn=on_evaluate_config_fn,
+            accept_failures=accept_failures,
+            initial_parameters=initial_parameters,
+            fit_metrics_aggregation_fn=fit_metrics_aggregation_fn,
+            evaluate_metrics_aggregation_fn=evaluate_metrics_aggregation_fn,
+        )
+
+        self.my_config = my_config
+
+    def aggregate_fit(
+        self,
+        server_round: int,
+        results,
+        failures,
+    ):
+        # Call aggregate_fit from base class (FedAvg) to aggregate parameters and metrics
+        aggregated_parameters, metrics_aggregated = super(
+        ).aggregate_fit(server_round, results, failures)
+
+        wandb.log(metrics_aggregated, step=server_round)
 
         if aggregated_parameters is not None:
             # Convert `Parameters` to `List[np.ndarray]`

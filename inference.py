@@ -13,10 +13,11 @@ if __name__ == "__main__":
     from constants import CONFIG, DEVICE
 
     # MODEL_NAME = "S2S_GRU_Att_CL60CS10_TF_MAE_V2"
-    MODEL_NAME = "FedAvg_S2S_GRU_Att_CL60CS10_TF_MAE_V2"
+    # MODEL_NAME = "FedAvg_S2S_GRU_Att_CL60CS10_TF_MAE_V2"
+    MODEL_NAME = "FedAvg_CL60_S2S_Final"
 
     START_IDX = 100
-    N_TO_PLOT = 100
+    N_TO_PLOT = 150
 
     # Load CONFIG json file
     with open(os.path.join(CONFIG["RESULTS_DIR"], MODEL_NAME, "config.json"), 'r') as f:

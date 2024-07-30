@@ -230,7 +230,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         pass
 
     @staticmethod
-    def generate_data(config, split_seed=123, standardize=True, safemode=True):
+    def generate_data(config, split_seed=123, standardize=True, safemode=True, verbose=True):
         # Check if there is a config.json file in the GEN_DATA_DIR
         if os.path.exists(os.path.join(config["GEN_DATA_DIR"], "config.json")):
             with open(os.path.join(config["GEN_DATA_DIR"], "config.json"), "r") as f:
@@ -268,13 +268,13 @@ class Rastro_Dataset(torch.utils.data.Dataset):
 
         # 1. Add new column for day of the week in last position
         data = np.insert(data, data.shape[1], 0, axis=1)
-        print("Adding day of the week feature")
+        print("Adding day of the week feature") if verbose else None
         for i in tqdm(range(len(data))):
             data[i, -1] = get_date_from_overalltime(data[i, 0]).weekday()
 
         # 2. Add new column for hour of the day also in last position
         data = np.insert(data, data.shape[1], 0, axis=1)
-        print("Adding hour of the day feature")
+        print("Adding hour of the day feature") if verbose else None
         for i in tqdm(range(len(data))):
             data[i, -1] = get_date_from_overalltime(data[i, 0]).hour
 
@@ -283,7 +283,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         data[:, 13] = data[:, 13] / 1e6
 
         # standardize data
-        print("Standardizing data...")
+        print("Standardizing data...") if verbose else None
         if standardize:
             data_std = (data - data.mean(axis=0)) / data.std(axis=0)
             # keep the first column (timestamps) unchanged
@@ -291,11 +291,14 @@ class Rastro_Dataset(torch.utils.data.Dataset):
         else:
             data_std = data
 
+        # save data_std to a .npy file
+        # np.save(os.path.join("data", "data_std"), data_std)
+
         # We now subdivide the data to different agents
         # Remember: each agent must contain a total of n_agent_samples = config["SAMPLES_PER_AGENT"]
 
         # "normalize" the first column so that indexes start from 0
-        print("Subdividing data into agents...")
+        print("Subdividing data into agents...") if verbose else None
         dataset_ids = data_std[:, 0] - data_std[0, 0]
         agent_idxs = dataset_ids // config["SAMPLES_PER_AGENT"]
 
@@ -304,7 +307,8 @@ class Rastro_Dataset(torch.utils.data.Dataset):
             agents_data.append(data_std[agent_idxs == agent_idx])
 
         for agent_idx, agent_data in tqdm(enumerate(agents_data)):
-            print(f"Now generating data for agent {agent_idx}...")
+            print(
+                f"Now generating data for agent {agent_idx}...") if verbose else None
             # create empty directories for train, valid and test sets
             train_directory = os.path.join(
                 config["GEN_DATA_DIR"], f"agent_{agent_idx}", "train")
@@ -361,7 +365,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
                             train_directory, f"train_crop_agent_{agent_idx}_{sub_idx}_{k}"), crop)
                     else:
                         print(
-                            f"Skipping Training crop {k} in subset {sub_idx} of agent {agent_idx} because of time gaps")
+                            f"Skipping Training crop {k} in subset {sub_idx} of agent {agent_idx} because of time gaps") if verbose else None
 
             for sub_idx, valid_subset in enumerate(valid):
                 # now perform cropping with step
@@ -375,7 +379,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
                             valid_directory, f"valid_crop_agent_{agent_idx}_{sub_idx}_{k}"), crop)
                     else:
                         print(
-                            f"Skipping Valid crop {k} in subset {sub_idx} of agent {agent_idx} because of time gaps")
+                            f"Skipping Valid crop {k} in subset {sub_idx} of agent {agent_idx} because of time gaps") if verbose else None
 
             for sub_idx, test_subset in enumerate(test):
                 # now perform cropping with step
@@ -389,7 +393,7 @@ class Rastro_Dataset(torch.utils.data.Dataset):
                             test_directory, f"test_crop_agent_{agent_idx}_{sub_idx}_{k}"), crop)
                     else:
                         print(
-                            f"Skipping Test crop {k} in subset {sub_idx} of agent {agent_idx} because of time gaps")
+                            f"Skipping Test crop {k} in subset {sub_idx} of agent {agent_idx} because of time gaps") if verbose else None
         # Print some statistics
         print("Number of agents: ", int(agent_idxs.max())+1)
 
@@ -435,7 +439,7 @@ if __name__ == "__main__":
     # Example usage of the Rastro_Dataset class
     from constants import CONFIG
 
-    Rastro_Dataset.generate_data(CONFIG, split_seed=123, standardize=False)
+    Rastro_Dataset.generate_data(CONFIG, split_seed=123, standardize=True)
     # Rastro_Dataset.generate_data_simple(
     #     CONFIG, split_seed=123, standardize=False)
 
