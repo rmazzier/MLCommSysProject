@@ -1,1 +1,5 @@
-Project for the Machine Learning for Mobile Communication Systems PhD Course.
+
+## Federated Learning for Mobile Traffic Forecasting
+### Machine Learning for Mobile Communication Systems Ph.D. Course (A.A. 23/24) - Project Report 
+
+**Project abstract:** This project report explores the application of Federated Learning to a multi-dimensional time series forecasting problem using real mobile traffic data from an LTE cell in Madrid, El Rastro neighborhood. The study involves training a Recurrent Neural Network model, referred to as FedRNN, within a Federated Learning framework. The performance of FedRNN was evaluated against models trained on local datasets in two modalities: first, by assessing the models on the union of all local test sets to evaluate generalization, and second, by comparing performance on each individual local test set. The results demonstrate that FedRNN significantly outperforms local models in both modalities. Additionally, this report investigates the impact of input sequence length on the quality of the predictions and briefly explores the use of the FedProx federated strategy as an alternative to the more common FedAvg, even though no substantial difference was observed. Experimental results are thoroughly discussed, together with aspects regarding the model's predictive limitations and future work ideas.
