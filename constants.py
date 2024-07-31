@@ -53,7 +53,7 @@ CONFIG = {
     "ATTENTION": True,
 
     # --- WANDB VARIABLES ---
-    "MODEL_NAME": "S2S_Final_MoreRounds",
+    "MODEL_NAME": "S2S_Final_FedProx",
     "WANDB_MODE": "online",
     # "WANDB_MODE": "disabled",
     "WANDB_GROUP": "",

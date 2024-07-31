@@ -270,7 +270,7 @@ class FedProxWandb(fl.server.strategy.FedProx):
                  accept_failures: bool = True,
                  fit_metrics_aggregation_fn: Optional[MetricsAggregationFn] = None,
                  evaluate_metrics_aggregation_fn: Optional[MetricsAggregationFn] = None,
-                 proximal_multiplier: float = 1.0,
+                 proximal_mu: float = 1.0,
                  ) -> None:
         super().__init__(
             fraction_fit=fraction_fit,
@@ -285,6 +285,7 @@ class FedProxWandb(fl.server.strategy.FedProx):
             initial_parameters=initial_parameters,
             fit_metrics_aggregation_fn=fit_metrics_aggregation_fn,
             evaluate_metrics_aggregation_fn=evaluate_metrics_aggregation_fn,
+            proximal_mu=proximal_mu
         )
 
         self.my_config = my_config

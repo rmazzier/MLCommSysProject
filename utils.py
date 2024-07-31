@@ -79,10 +79,36 @@ def plot_forecast_example(config, test_dataset, trained_net, to_plot_idx=0, suff
         # plt.show()
 
 
-def plot_predictions_long(config, start_idx, n_to_plot, test_dataset, trained_net):
+def plot_predictions_long(config, start_idx, n_to_plot, test_dataset, trained_net, savepath=None):
 
     # Now, I want the test dataset to be ordered, so I have to order the test_dataset.filepaths
     # The filenames are train_crop_agent_<idx>_<subset>_<cropidx>.npy
+    ground_truths_array, predictions_array = get_predictions_long(
+        start_idx, n_to_plot, test_dataset, trained_net)
+
+    # Plot
+    _, ax = plt.subplots(3, 1, figsize=(10, 10))
+
+    feature_names = ["# of Users", "Downlink (Bit/s)", "Uplink (Bit/s)"]
+    for i in range(3):
+        # Plot ground truth with a dashed blue line
+        ax[i].plot(ground_truths_array[:, i],
+                   label="Ground Truth" if i == 2 else None, linestyle="--")
+        # Plot predictions with a solid orange line
+        ax[i].plot(predictions_array[:, i],
+                   label="Prediction" if i == 2 else None)
+        ax[i].set_title(feature_names[i])
+        ax[i].grid(alpha=0.5)
+        if i == 2:
+            ax[i].legend(loc="upper right")
+
+    if savepath is not None:
+        plt.savefig(savepath)
+    else:
+        plt.show()
+
+
+def get_predictions_long(start_idx, n_to_plot, test_dataset, trained_net):
     filepaths = [path.split("/")[-1].split(".")[0].split("_")[-3:]
                  for path in test_dataset.filepaths]
 
@@ -122,25 +148,7 @@ def plot_predictions_long(config, start_idx, n_to_plot, test_dataset, trained_ne
 
     predictions_array = np.concatenate(predictions_list, axis=0)
     predictions_array = np.concatenate(predictions_array, axis=0)
-
-    # Plot
-    _, ax = plt.subplots(3, 1, figsize=(10, 10))
-
-    feature_names = ["# of Users", "Downlink (Bit/s)", "Uplink (Bit/s)"]
-    for i in range(3):
-        # Plot ground truth with a dashed blue line
-        ax[i].plot(ground_truths_array[:, i],
-                   label="Ground Truth" if i == 2 else None, linestyle="--")
-        # Plot predictions with a solid orange line
-        ax[i].plot(predictions_array[:, i],
-                   label="Prediction" if i == 2 else None)
-        ax[i].set_title(feature_names[i])
-        ax[i].grid(alpha=0.5)
-        if i == 2:
-            ax[i].legend(loc="upper right")
-
-    plt.savefig(os.path.join(
-        config["RESULTS_DIR"], config["MODEL_NAME"], f"all_forecasts_{start_idx}-{start_idx+n_to_plot}.pdf"))
+    return ground_truths_array, predictions_array
 
 
 def interpolate_missing_values(data):
